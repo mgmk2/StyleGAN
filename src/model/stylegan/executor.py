@@ -122,8 +122,8 @@ class StyleGAN(ExecutorBase):
         images_gen_raw = self.model.eval_gen(inputs, lod_input).numpy()
         images_gen = image_utils.convert_color_range(
             images_gen_raw, input_range=(-1, 1), output_range=(0, 1))
-        image_utils.show_images(images_gen, epoch=epoch, mode=mode)
-        self.save_images(images_gen, 'eval/eval_image.png')
+        image_utils.show_images(images_gen, mode=mode)
+        self.save_images(images_gen, 'eval_image.png')
 
 
     @tpu_decorator
