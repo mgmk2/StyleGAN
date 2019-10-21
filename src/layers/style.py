@@ -1,8 +1,13 @@
+# Code derived from
+# https://github.com/tensorflow/tensorflow/blob/r2.0/tensorflow/python/keras/layers/core.py
+# and
+# https://github.com/tensorflow/tensorflow/blob/r2.0/tensorflow/python/keras/layers/normalization.py
+
 import numpy as np
-import tensorflow as tf
 
 from tensorflow.python.distribute import distribution_strategy_context
 
+from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 
 from tensorflow.python.keras import backend as K
@@ -35,8 +40,8 @@ class MixStyle(Layer):
         self.layer_idx = np.arange(num_layers)[np.newaxis, :, np.newaxis]
 
         if self.truncation_psi is not None and self.truncation_cutoff is not None:
-            ones = np.ones([1, num_layers, 1], dtype=np.float32)
-            self.coefs = array_ops.where(
+            ones = array_ops.ones([1, num_layers, 1], dtype=dtypes.float32)
+            self.coeff = array_ops.where(
                 self.layer_idx < self.truncation_cutoff,
                 self.truncation_psi * ones,
                 ones)
@@ -97,14 +102,15 @@ class MixStyle(Layer):
 
         if training_value is not False and self.mixing_prob is not None:
             def true_branch():
-                cur_layer = 2 * (1 + tf.cast(tf.reshape(lod, [-1])[0], tf.int32))
+                cur_layer = 2 * (1 + math_ops.cast(
+                    array_ops.reshape(lod, [-1])[0], dtypes.int32))
                 cutoff = tf_utils.smart_cond(
                     random_ops.random_uniform([], 0.0, 1.0) < self.mixing_prob,
-                    lambda: random_ops.random_uniform([], 1, cur_layer, tf.int32),
+                    lambda: random_ops.random_uniform([], 1, cur_layer, dtypes.int32),
                     lambda: cur_layer)
                 return array_ops.where(
                     array_ops.broadcast_to(
-                        self.layer_idx < cutoff, tf.shape(latent1)),
+                        self.layer_idx < cutoff, array_ops.shape(latent1)),
                     latent1,
                     latent2)
             def false_branch():
@@ -115,7 +121,7 @@ class MixStyle(Layer):
             and self.truncation_psi is not None \
             and self.truncation_cutoff is not None:
             def true_branch():
-                return self._interpolate(latent_avg_new, latent1, self.coefs)
+                return self._interpolate(latent_avg_new, latent1, self.coeff)
             def false_branch():
                 return latent1
             latent1 = tf_utils.smart_cond(training, true_branch, false_branch)
