@@ -10,10 +10,6 @@ class ExecutorBase(object):
         self.use_tpu = use_tpu
         self.show_mode = show_mode
 
-        if self.params.dataset_dir is None:
-            self.DATASET_DIR = os.path.join(os.getcwd(), 'dataset')
-        else:
-            self.DATASET_DIR = self.params.dataset_dir
         self.RESULT_DIR = os.path.join(os.getcwd(), 'result')
         if not os.path.exists(self.RESULT_DIR):
             os.mkdir(self.RESULT_DIR)

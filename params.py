@@ -14,10 +14,8 @@ class Params(object):
         self.lr_beta1 = 0
         self.lr_beta2 = 0.99
 
-        self.GAN_loss = 'bce'
         self.gp_weight = 10.0
 
-        self.dataset_dir = None
         self.dataset_train = 'cifar10'
         self.dataset_eval = 'cifar10'
 
@@ -37,7 +35,7 @@ class Params(object):
         self.epochs_for_progressive = 10
         self.epochs_at_lod_max = 50
         self.lr_mul_shedule = {0: 1.0, 1: 0.5, 2: 0.25, 3: 0.125, 4: 0.0625}
-        
+
         #=======================================================================
 
     def save(self, filename):
