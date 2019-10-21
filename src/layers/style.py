@@ -88,30 +88,12 @@ class MixStyle(Layer):
             latent_avg_new = self._interpolate(
                 latent_avg_new, self.latent_avg, self.latent_avg_beta)
 
-            if distribution_strategy_context.in_cross_replica_context():
-                strategy = distribution_strategy_context.get_strategy()
-
-                def true_branch():
-                    return strategy.extended.update(
-                        self.latent_avg,
-                        self._assign_latent_avg,
-                        (latent_avg_new,),
-                        group=False)
-                def false_branch():
-                    return strategy.unwrap(self.latent_avg)
-                update_op = tf_utils.smart_cond(
-                    training, true_branch, false_branch)
-
-            else:
-                def true_branch():
-                    return self._assign_latent_avg(
-                        self.latent_avg, latent_avg_new)
-                def false_branch():
-                    return self.latent_avg
-                update_op = tf_utils.smart_cond(
-                    training, true_branch, false_branch)
-
-            self.add_update(update_op, inputs=True)
+            def true_branch():
+                return self._assign_latent_avg(self.latent_avg, latent_avg_new)
+            def false_branch():
+                return self.latent_avg
+            update_op = tf_utils.smart_cond(training, true_branch, false_branch)
+            self.add_update(update_op)
 
         if training_value is not False and self.mixing_prob is not None:
             def true_branch():
