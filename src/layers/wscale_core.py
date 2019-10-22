@@ -64,16 +64,13 @@ class ScaledDense(Dense):
             self.coeff = 1.0
 
     def call(self, inputs):
-        if self.lr_mul == 1.0:
-            kernel = self.coeff * self.kernel
-        else:
-            @custom_gradient
-            def lr_multiplier(x):
-                y = array_ops.identity(x)
-                def grad(dy):
-                    return dy * self.lr_mul
-                return y, grad
-            kernel = lr_multiplier(self.coeff * self.kernel)
+        @custom_gradient
+        def lr_multiplier(x):
+            y = array_ops.identity(x)
+            def grad(dy):
+                return dy * self.lr_mul
+            return y, grad
+        kernel = lr_multiplier(self.coeff * self.kernel)
 
         rank = len(inputs.shape)
         if rank > 2:
