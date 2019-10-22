@@ -63,8 +63,6 @@ class StyleGANModel(BaseModel):
             use_sn=self.use_sn_in_disc)
         self.optimizer_disc = tf.optimizers.Adam(
             self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2)
-        self.trainable_var_disc = self.discriminator.trainable_variables
-        self.non_trainable_var_disc = self.discriminator.non_trainable_variables
 
         self.generator_synthesis = GeneratorSynthesis(
             res_out=self.image_res,
@@ -92,12 +90,6 @@ class StyleGANModel(BaseModel):
 
         self.optimizer_gen = tf.optimizers.Adam(
             self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2)
-        self.trainable_var_gen = self.generator_synthesis.trainable_variables + \
-                                 self.generator_mapping.trainable_variables + \
-                                 self.generator_mix_style.trainable_variables
-        self.non_trainable_var_gen = self.generator_synthesis.non_trainable_variables + \
-                                     self.generator_mapping.non_trainable_variables + \
-                                     self.generator_mix_style.non_trainable_variables
 
     @tf.function
     @convert_to_tfdata_single_batch
@@ -133,8 +125,9 @@ class StyleGANModel(BaseModel):
                 grad_penalty = tf.reduce_sum(grads ** 2) / self.params.batch_size
                 loss += 0.5 * self.params.gp_weight * grad_penalty
 
-        grads = tape.gradient(loss, self.trainable_var_disc)
-        self.optimizer_disc.apply_gradients(zip(grads, self.trainable_var_disc))
+        trainable_vars = self.discriminator.trainable_variables
+        grads = tape.gradient(loss, trainable_vars)
+        self.optimizer_disc.apply_gradients(zip(grads, trainable_vars))
         return loss
 
     @tf.function
@@ -158,8 +151,11 @@ class StyleGANModel(BaseModel):
                 labels=tf.ones_like(logits_fake), logits=logits_fake)
             loss = tf.reduce_sum(loss) / self.params.batch_size
 
-        grads = tape.gradient(loss, self.trainable_var_gen)
-        self.optimizer_gen.apply_gradients(zip(grads, self.trainable_var_gen))
+        trainable_vars = self.generator_synthesis.trainable_variables + \
+                         self.generator_mapping.trainable_variables + \
+                         self.generator_mix_style.trainable_variables
+        grads = tape.gradient(loss, trainable_vars)
+        self.optimizer_gen.apply_gradients(zip(grads, trainable_vars))
         return loss
 
     @tf.function
@@ -178,8 +174,15 @@ class StyleGANModel(BaseModel):
 
     @tpu_decorator
     def get_weights(self):
-        values = self.trainable_var_gen + self.trainable_var_disc + \
-                 self.non_trainable_var_gen + self.non_trainable_var_disc + \
+        trainable_vars = self.generator_synthesis.trainable_variables + \
+                         self.generator_mapping.trainable_variables + \
+                         self.generator_mix_style.trainable_variables + \
+                         self.discriminator.trainable_variables
+        non_trainable_vars = self.generator_synthesis.non_trainable_variables + \
+                             self.generator_mapping.non_trainable_variables + \
+                             self.generator_mix_style.non_trainable_variables + \
+                             self.discriminator.non_trainable_variables
+        values = trainable_vars + non_trainable_vars + \
                  self.optimizer_gen.weights + self.optimizer_disc.weights
         weights = {}
         for i, v in enumerate(values):
@@ -189,8 +192,15 @@ class StyleGANModel(BaseModel):
 
     @tpu_decorator
     def set_weights(self, weights, load_optimizer=True):
-        tensors = self.trainable_var_gen + self.trainable_var_disc + \
-                  self.non_trainable_var_gen + self.non_trainable_var_disc + \
+        trainable_vars = self.generator_synthesis.trainable_variables + \
+                         self.generator_mapping.trainable_variables + \
+                         self.generator_mix_style.trainable_variables + \
+                         self.discriminator.trainable_variables
+        non_trainable_vars = self.generator_synthesis.non_trainable_variables + \
+                             self.generator_mapping.non_trainable_variables + \
+                             self.generator_mix_style.non_trainable_variables + \
+                             self.discriminator.non_trainable_variables
+        tensors = trainable_vars + non_trainable_vars + \
                   self.optimizer_gen.weights + self.optimizer_disc.weights
         for tensor in tensors:
             if not load_optimizer and 'Adam' in tensor.name:
