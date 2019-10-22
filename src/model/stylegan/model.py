@@ -51,8 +51,6 @@ class StyleGANModel(BaseModel):
 
         self.discriminator = Discriminator(
             res=self.image_res,
-            num_channels_in=self.image_ch,
-            num_channels=1,
             fmap_base=8192,
             fmap_decay=1.0,
             fmap_max=self.z_dim,
@@ -70,8 +68,6 @@ class StyleGANModel(BaseModel):
 
         self.generator_synthesis = GeneratorSynthesis(
             res_out=self.image_res,
-            num_channels=self.image_ch,
-            num_latent=self.z_dim,
             fmap_base=8192,
             fmap_decay=1.0,
             fmap_max=self.z_dim,
@@ -81,7 +77,6 @@ class StyleGANModel(BaseModel):
             distribution=self.params.distribution)
         self.generator_mapping = GeneratorMapping(
             res_out=self.image_res,
-            num_input_latent=self.z_dim,
             num_mapping_layers=self.num_mapping_layers,
             num_mapping_latent=self.z_dim,
             num_output_latent=self.z_dim,
@@ -90,7 +85,6 @@ class StyleGANModel(BaseModel):
             distribution=self.params.distribution)
         self.generator_mix_style = StyleMixer(
             res_out=self.image_res,
-            num_latent=self.z_dim,
             mixing_prob=self.mixing_prob,
             latent_avg_beta=self.latent_avg_beta,
             truncation_psi=self.truncation_psi,
