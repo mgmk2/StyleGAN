@@ -97,12 +97,12 @@ class ScaleAdd(Layer):
         self.scale_initializer = initializers.get(scale_initializer)
 
     def build(self, input_shape):
-        if not isinstance(input_shape, list):
+        if not isinstance(input_shape, list) and not isinstance(input_shape, tuple):
             raise ValueError('A ScaleAdd layer should be called '
-                             'on a list of inputs.')
+                             'on a list/tuple of inputs.')
         if len(input_shape) < 2:
             raise ValueError('A ScaleAdd layer should be called '
-                             'on a list of 2 inputs. '
+                             'on a list/tuple of 2 inputs. '
                              'Got ' + str(len(input_shape)) + ' inputs.')
         input1_shape, input2_shape = input_shape
         self.scale = self.add_weight(
@@ -114,12 +114,12 @@ class ScaleAdd(Layer):
         self.build = True
 
     def call(self, inputs):
-        if not isinstance(inputs, list):
+        if not isinstance(inputs, list) and not isinstance(inputs, tuple):
             raise ValueError('A ScaleAdd layer should be called '
-                             'on a list of inputs.')
+                             'on a list/tuple of inputs.')
         if len(inputs) != 2:
             raise ValueError('A ScaleAdd layer should be called '
-                             'on a list of 2 inputs. '
+                             'on a list/tuple of 2 inputs. '
                              'Got ' + str(len(inputs)) + ' inputs.')
         x1, x2 = inputs
         if len(x2.shape) == 3:
@@ -149,12 +149,12 @@ class AdaIN(Layer):
         self.epsilon = epsilon
 
     def build(self, input_shape):
-        if not isinstance(input_shape, list):
+        if not isinstance(input_shape, list) and not isinstance(input_shape, tuple):
             raise ValueError('An AdaIN layer should be called '
-                             'on a list of inputs.')
+                             'on a list/tuple of inputs.')
         if len(input_shape) != 2:
             raise ValueError('An AdaIN layer should be called '
-                             'on a list of 2 inputs. '
+                             'on a list/tuple of 2 inputs. '
                              'Got ' + str(len(input_shape)) + ' inputs.')
         x_shape, w_shape = input_shape
         assert len(w_shape) == len(x_shape) + 1
@@ -170,12 +170,12 @@ class AdaIN(Layer):
         return x
 
     def call(self, inputs):
-        if not isinstance(inputs, list):
+        if not isinstance(inputs, list) and not isinstance(inputs, tuple):
             raise ValueError('An AdaIN layer should be called '
-                             'on a list of inputs.')
+                             'on a list/tuple of inputs.')
         if len(inputs) != 2:
             raise ValueError('An AdaIN layer should be called '
-                             'on a list of 2 inputs. '
+                             'on a list/tuple of 2 inputs. '
                              'Got ' + str(len(inputs)) + ' inputs.')
         x, w = inputs
         w_s = w[:, 0]
@@ -202,7 +202,7 @@ class AddBias2D(Layer):
     Output shape:
     4D tensor with same shape as input.
     """
-    
+
     def __init__(self,
                  bias_initializer='zeros',
                  bias_regularizer=None,
