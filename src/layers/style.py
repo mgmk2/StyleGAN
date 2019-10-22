@@ -39,6 +39,11 @@ class MixStyle(Layer):
         self.truncation_cutoff = truncation_cutoff
         self.layer_idx = np.arange(num_layers)[np.newaxis, :, np.newaxis]
 
+        self.update_latent_avg = (self.latent_avg_beta is not None)
+        self.mix_latents = (self.mixing_prob is not None)
+        self.truncate_latent = (self.truncation_psi is not None and
+                                self.truncation_cutoff is not None)
+
         if self.truncation_psi is not None and self.truncation_cutoff is not None:
             ones = array_ops.ones([1, num_layers, 1], dtype=dtypes.float32)
             self.coeff = array_ops.where(
@@ -83,13 +88,13 @@ class MixStyle(Layer):
     def _interpolate(self, x1, x2, ratio):
         return x1 + ratio * (x2 - x1)
 
-    def call(self, inputs, training=False):
+    def call(self, inputs, training=None):
         training = self._get_training_value(training)
         latent1, latent2, lod = inputs
 
         training_value = tf_utils.constant_value(training)
         latent_avg_new = math_ops.reduce_mean(latent1[:, 0], axis=0)
-        if training_value is not False and self.latent_avg_beta is not None:
+        if training_value != False and self.update_latent_avg:
             latent_avg_new = self._interpolate(
                 latent_avg_new, self.latent_avg, self.latent_avg_beta)
 
@@ -101,7 +106,7 @@ class MixStyle(Layer):
                 return tf_utils.smart_cond(training, true_branch, false_branch)
             self.add_update(update_op)
 
-        if training_value is not False and self.mixing_prob is not None:
+        if training_value != False and self.mix_latents:
             def true_branch():
                 cur_layer = 2 * (1 + math_ops.cast(
                     array_ops.reshape(lod, [-1])[0], dtypes.int32))
@@ -118,9 +123,7 @@ class MixStyle(Layer):
                 return latent1
             latent1 = tf_utils.smart_cond(training, true_branch, false_branch)
 
-        if training_value is not False \
-            and self.truncation_psi is not None \
-            and self.truncation_cutoff is not None:
+        if training_value != False and self.truncate_latent:
             def true_branch():
                 return self._interpolate(latent_avg_new, latent1, self.coeff)
             def false_branch():
