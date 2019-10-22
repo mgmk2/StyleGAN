@@ -93,7 +93,6 @@ class AdaIN_block(Layer):
                  distribution='untruncated_normal',
                  **kwargs):
         super(AdaIN_block, self).__init__(**kwargs)
-        self.res = res
         self.num_channels = num_channels
 
         self.dense = ScaledDense(
@@ -107,10 +106,9 @@ class AdaIN_block(Layer):
 
     def call(self, inputs):
         x, w = inputs
-        with tf.name_scope('AdaIN_block_{0:}x{0:}'.format(self.res)):
-            style = self.dense(w)
-            style = tf.reshape(style, (-1, 2, 1, 1, self.num_channels))
-            y = self.adain_layer((x, style))
+        style = self.dense(w)
+        style = tf.reshape(style, (-1, 2, 1, 1, self.num_channels))
+        y = self.adain_layer((x, style))
         return y
 
 class const_block(Layer):
@@ -127,7 +125,8 @@ class const_block(Layer):
         self.add_bias0 = AddBias2D(name='add_bias2d_{0:}x{0:}_0'.format(res))
         self.act0 = LeakyReLU(alpha=0.2)
         self.adain0 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul, distribution=distribution)
+            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
+            distribution=distribution, name='AdaIN_block_{0:}x{0:}_0'.format(res))
 
         self.scaled_conv = ScaledConv2D(
             num_filters,
@@ -142,26 +141,26 @@ class const_block(Layer):
         self.add_bias1 = AddBias2D(name='add_bias2d_{0:}x{0:}_1'.format(res))
         self.act1 = LeakyReLU(alpha=0.2)
         self.adain1 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul, distribution=distribution)
+            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
+            distribution=distribution, name='AdaIN_block_{0:}x{0:}_1'.format(res))
 
     def call(self, inputs):
         w, noise = inputs
-        with tf.name_scope('const_block'):
-            noise0 = noise[:, :, :, 0]
-            noise1 = noise[:, :, :, 1]
-            w0 = w[:, 0]
-            w1 = w[:, 1]
+        noise0 = noise[:, :, :, 0]
+        noise1 = noise[:, :, :, 1]
+        w0 = w[:, 0]
+        w1 = w[:, 1]
 
-            h = self.scaleadd_to_const(noise0)
-            h = self.add_bias0(h)
-            h = self.act0(h)
-            h = self.adain0((h, w0))
+        h = self.scaleadd_to_const(noise0)
+        h = self.add_bias0(h)
+        h = self.act0(h)
+        h = self.adain0((h, w0))
 
-            h = self.scaled_conv(h)
-            h = self.scale_add((h, noise1))
-            h = self.add_bias1(h)
-            h = self.act1(h)
-            y = self.adain1((h, w1))
+        h = self.scaled_conv(h)
+        h = self.scale_add((h, noise1))
+        h = self.add_bias1(h)
+        h = self.act1(h)
+        y = self.adain1((h, w1))
         return y
 
 class generator_block(Layer):
@@ -173,7 +172,6 @@ class generator_block(Layer):
                  distribution='untruncated_normal',
                  **kwargs):
         super(generator_block, self).__init__(**kwargs)
-        self.res = res
 
         self.upsampling = UpSampling2D((2, 2), name='upsampling2d_{0:}x{0:}'.format(res))
         self.scaled_conv0 = ScaledConv2D(
@@ -191,7 +189,8 @@ class generator_block(Layer):
         self.add_bias0 = AddBias2D(name='add_bias2d_{0:}x{0:}_0'.format(res))
         self.act0 = LeakyReLU(alpha=0.2)
         self.adain0 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul, distribution=distribution)
+            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
+            distribution=distribution, name='AdaIN_block_{0:}x{0:}_0'.format(res))
 
         self.scaled_conv1 = ScaledConv2D(
             num_filters,
@@ -207,55 +206,29 @@ class generator_block(Layer):
         self.add_bias1 = AddBias2D(name='add_bias2d_{0:}x{0:}_1'.format(res))
         self.act1 = LeakyReLU(alpha=0.2)
         self.adain1 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul, distribution=distribution)
+            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
+            distribution=distribution, name='AdaIN_block_{0:}x{0:}_1'.format(res))
 
     def call(self, inputs):
         x, w, noise = inputs
-        with tf.name_scope('generator_block_{0:}x{0:}'.format(self.res)):
+        noise0 = noise[:, :, :, 0]
+        noise1 = noise[:, :, :, 1]
+        w0 = w[:, 0]
+        w1 = w[:, 1]
 
-            noise0 = noise[:, :, :, 0]
-            noise1 = noise[:, :, :, 1]
-            w0 = w[:, 0]
-            w1 = w[:, 1]
+        h = self.upsampling(x)
+        h = self.scaled_conv0(h)
+        h = self.blur(h)
+        h = self.scale_add0((h, noise0))
+        h = self.add_bias0(h)
+        h = self.act0(h)
+        h = self.adain0((h, w0))
 
-            h = self.upsampling(x)
-            h = self.scaled_conv0(h)
-            h = self.blur(h)
-            h = self.scale_add0((h, noise0))
-            h = self.add_bias0(h)
-            h = self.act0(h)
-            h = self.adain0((h, w0))
-
-            h = self.scaled_conv1(h)
-            h = self.scale_add1((h, noise1))
-            h = self.add_bias1(h)
-            h = self.act1(h)
-            y = self.adain1((h, w1))
-        return y
-
-class toRGB(Layer):
-    def __init__(self,
-                 res,
-                 num_channels,
-                 use_wscale=True,
-                 lr_mul=1.0,
-                 distribution='untruncated_normal',
-                 **kwargs):
-        super(toRGB, self).__init__(**kwargs)
-        self.res = res
-        self.scaled_conv = ScaledConv2D(
-            num_channels,
-            (1, 1),
-            padding='same',
-            use_wscale=use_wscale,
-            lr_mul=lr_mul,
-            kernel_initializer=get_initializer(
-                distribution=distribution, use_wscale=use_wscale),
-            name='scaled_conv2d_{0:}x{0:}_toRGB'.format(res))
-
-    def call(self, inputs):
-        with tf.name_scope('toRGB_{0:}x{0:}'.format(self.res)):
-            y = self.scaled_conv(inputs)
+        h = self.scaled_conv1(h)
+        h = self.scale_add1((h, noise1))
+        h = self.add_bias1(h)
+        h = self.act1(h)
+        y = self.adain1((h, w1))
         return y
 
 class GeneratorSynthesis(Model):
@@ -294,71 +267,78 @@ class GeneratorSynthesis(Model):
 
     def _build_layers(self):
         res = 4
-        with tf.name_scope('generator_synthesis'):
-            self.mylayers['image_out'] = [None for _ in range(self.num_blocks)]
-            self.mylayers['block'] = [None for _ in range(self.num_blocks)]
-            self.mylayers['toRGB'] = [None for _ in range(self.num_blocks)]
-            self.mylayers['x_out'] = [None for _ in range(self.num_blocks)]
-            self.lod = [None for _ in range(self.num_blocks)]
 
-            self.mylayers['const_block'] = const_block(
-                res, self.res2num_filters(res), use_wscale=self.use_wscale,
-                lr_mul=self.lr_mul, distribution=self.distribution)
-            self.mylayers['image_out'][0] = toRGB(
-                res, self.num_channels, use_wscale=self.use_wscale,
-                lr_mul=self.lr_mul, distribution=self.distribution)
+        self.const_block = const_block(
+            res, self.res2num_filters(res), use_wscale=self.use_wscale,
+            lr_mul=self.lr_mul, distribution=self.distribution,
+            name='const_block')
+        self.image_out_layer0 = ScaledConv2D(
+            self.num_channels, (1, 1), padding='same',
+            use_wscale=self.use_wscale, lr_mul=self.lr_mul,
+            kernel_initializer=get_initializer(
+                distribution=self.distribution, use_wscale=self.use_wscale),
+            name='scaled_conv2d_{0:}x{0:}_toRGB'.format(res))
 
+        with tf.name_scope('generator_synthesis') as scope:
+            var_scope = '' if self.mode == 'static' else scope
             for i in range(1, self.num_blocks):
                 res *= 2
-                self.lod[i] = tf.constant(i, tf.float32)
-                self.mylayers['block'][i] = generator_block(
+                setattr(self, 'block{:}'.format(i), generator_block(
                     res, self.res2num_filters(res), use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution)
+                    lr_mul=self.lr_mul, distribution=self.distribution,
+                    name=var_scope + 'generator_block_{0:}x{0:}'.format(res)))
 
-                self.mylayers['toRGB'][i] = toRGB(
-                    res, self.num_channels, use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution)
-                self.mylayers['image_out'][i] = UpSampling2D(
-                    (2, 2), name='upsampling2d_image_out_{0:}x{0:}'.format(res))
-                self.mylayers['x_out'][i] = UpSampling2D(
-                    (2, 2), name='upsampling2d_x_out_{0:}x{0:}'.format(res))
+                setattr(self, 'toRGB{:}'.format(i), ScaledConv2D(
+                    self.num_channels, (1, 1), padding='same',
+                    use_wscale=self.use_wscale, lr_mul=self.lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=self.distribution, use_wscale=self.use_wscale),
+                    name=var_scope + 'scaled_conv2d_{0:}x{0:}_toRGB'.format(res)))
+                setattr(self, 'image_out_layer{:}'.format(i), UpSampling2D(
+                    (2, 2), name=var_scope + 'upsampling2d_image_out_{0:}x{0:}'.format(res)))
+                setattr(self, 'x_out_layer{:}'.format(i), UpSampling2D(
+                    (2, 2), name=var_scope + 'upsampling2d_x_out_{0:}x{0:}'.format(res)))
 
     def call(self, inputs, training=None):
         lod, w, *noise = inputs
         lod = tf.reshape(lod, [-1])[0]
 
-        with tf.name_scope('generator_synthesis'):
-            w0 = w[:, :2]
-            x = self.mylayers['const_block']([w0, noise[0]])
-            image_out = self.mylayers['image_out'][0](x)
+        w0 = w[:, :2]
+        x = self.const_block((w0, noise[0]))
+        image_out = self.image_out_layer0(x)
 
-            if self.mode == 'static':
-                for i in range(1, self.num_blocks):
-                    image_out = self.mylayers['image_out'][i](image_out)
-                    w_i = w[:, i * 2:(i + 1) * 2]
-                    x = self.mylayers['block'][i]([x, w_i, noise[i]])
-                    y = self.mylayers['toRGB'][i](x)
-                    image_out = interpolate_clip(y, image_out, self.lod[i] - lod)
+        if self.mode == 'static':
+            for i in range(1, self.num_blocks):
+                lod_i = tf.cast(i, tf.float32)
+                image_out = getattr(self, 'image_out_layer{:}'.format(i))(image_out)
+                w_i = w[:, i * 2:(i + 1) * 2]
+                x = getattr(self, 'block{:}'.format(i))((x, w_i, noise[i]))
+                y = getattr(self, 'toRGB{:}'.format(i))(x)
+                image_out = interpolate_clip(y, image_out, lod_i - lod)
 
-            elif self.mode == 'dynamic':
-                for i in range(1, self.num_blocks):
-                    @tf.function
-                    def block_i(x, image_out, w, noise, lod):
-                        if self.lod[i] >= lod + 1:
-                            x = self.mylayers['x_out'][i](x)
-                            image_out = self.mylayers['image_out'][i](image_out)
-                        else:
-                            w_i = w[:, i * 2:(i + 1) * 2]
-                            x = self.mylayers['block'][i]([x, w_i, noise[i]])
-                            if self.lod[i] <= lod:
-                                image_out = self.mylayers['toRGB'][i](x)
-                            else:
-                                x_new = self.mylayers['toRGB'][i](x)
-                                image_out_new = self.mylayers['image_out'][i](image_out)
-                                image_out = interpolate_clip(
-                                    x_new, image_out_new, self.lod[i] - lod)
-                        return x, image_out
-                    x, image_out = block_i(x, image_out, w, noise, lod)
+        elif self.mode == 'dynamic':
+            for i in range(1, self.num_blocks):
+                lod_i = tf.cast(i, tf.float32)
+                @tf.function
+                def block_i(x, image_out, w, noise, lod):
+                    if lod_i >= lod + 1:
+                        x = getattr(self, 'x_out_layer{:}'.format(i))(x)
+                        image_out = getattr(
+                            self, 'image_out_layer{:}'.format(i))(image_out)
+                    elif lod_i <= lod:
+                        w_i = w[:, i * 2:(i + 1) * 2]
+                        x = getattr(self, 'block{:}'.format(i))((x, w_i, noise[i]))
+                        image_out = getattr(self, 'toRGB{:}'.format(i))(x)
+                    else:
+                        w_i = w[:, i * 2:(i + 1) * 2]
+                        x = getattr(self, 'block{:}'.format(i))((x, w_i, noise[i]))
+                        x_new = getattr(self, 'toRGB{:}'.format(i))(x)
+                        image_out_new = getattr(
+                            self, 'image_out_layer{:}'.format(i))(image_out)
+                        image_out = interpolate_clip(
+                            x_new, image_out_new, lod_i - lod)
+                    return x, image_out
+                x, image_out = block_i(x, image_out, w, noise, lod)
         return image_out
 
 class GeneratorMapping(Model):
@@ -379,8 +359,6 @@ class GeneratorMapping(Model):
 
         self.pixel_norm = PixelNormalization()
         self.repeat_vector = RepeatVector(num_repeat_output)
-        self.scaled_dense = [None for _ in range(num_mapping_layers)]
-        self.act = [None for _ in range(num_mapping_layers)]
 
         for i in range(num_mapping_layers):
             if i == num_mapping_layers - 1:
@@ -388,22 +366,21 @@ class GeneratorMapping(Model):
             else:
                 num_latent = num_mapping_latent
 
-            self.scaled_dense[i] = ScaledDense(
+            setattr(self, 'scaled_dense{:}'.format(i), ScaledDense(
                 num_latent,
                 use_wscale=use_wscale,
                 lr_mul=lr_mul,
                 kernel_initializer=get_initializer(
                     distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scaled_dense_{:}'.format(i))
-            self.act[i] = LeakyReLU(alpha=0.2)
+                name='scaled_dense_{:}'.format(i)))
+            setattr(self, 'act{:}'.format(i), LeakyReLU(alpha=0.2))
 
     def call(self, inputs):
-        with tf.name_scope('generator_mapping'):
-            h = self.pixel_norm(inputs)
-            for i in range(self.num_mapping_layers):
-                h = self.scaled_dense[i](h)
-                h = self.act[i](h)
-            outputs = self.repeat_vector(h)
+        h = self.pixel_norm(inputs)
+        for i in range(self.num_mapping_layers):
+            h = getattr(self, 'scaled_dense{:}'.format(i))(h)
+            h = getattr(self, 'act{:}'.format(i))(h)
+        outputs = self.repeat_vector(h)
         return outputs
 
 class StyleMixer(Model):
@@ -426,9 +403,8 @@ class StyleMixer(Model):
 
     def call(self, inputs):
         lod, latent1, latent2 = inputs
-        with tf.name_scope('style_mixer'):
-            lod_tensor = tf.reshape(lod, (-1, 1, 1, 1))
-            return self.mix_style((latent1, latent2, lod_tensor))
+        lod_tensor = tf.reshape(lod, (-1, 1, 1, 1))
+        return self.mix_style((latent1, latent2, lod_tensor))
 
 #===============================================================================
 
@@ -501,14 +477,13 @@ class discriminator_block_output(Layer):
                 name='scaled_dense_{0:}x{0:}_1'.format(res))
 
     def call(self, inputs):
-        with tf.name_scope('discriminator_block_output'):
-            h = self.batch_stddev(inputs)
-            h = self.conv(h)
-            h = self.act0(h)
-            h = self.flatten(h)
-            h = self.dense0(h)
-            h = self.act1(h)
-            y = self.dense1(h)
+        h = self.batch_stddev(inputs)
+        h = self.conv(h)
+        h = self.act0(h)
+        h = self.flatten(h)
+        h = self.dense0(h)
+        h = self.act1(h)
+        y = self.dense1(h)
         return y
 
 class discriminator_block(Layer):
@@ -521,7 +496,6 @@ class discriminator_block(Layer):
                  use_sn=False,
                  **kwargs):
         super(discriminator_block, self).__init__(**kwargs)
-        self.res = res
 
         self.act0 = LeakyReLU(alpha=0.2)
         self.act1 = LeakyReLU(alpha=0.2)
@@ -570,15 +544,14 @@ class discriminator_block(Layer):
                 name='scaled_conv2d_{0:}x{0:}_1'.format(res))
 
     def call(self, inputs):
-        with tf.name_scope('discriminator_block_{0:}x{0:}'.format(self.res)):
-            h = self.conv0(inputs)
-            h = self.act0(h)
-            h = self.blur(h)
+        h = self.conv0(inputs)
+        h = self.act0(h)
+        h = self.blur(h)
 
-            h = self.conv1(h)
-            h = self.down_sample(h)
-            h = self.add_bias(h)
-            y = self.act1(h)
+        h = self.conv1(h)
+        h = self.down_sample(h)
+        h = self.add_bias(h)
+        y = self.act1(h)
         return y
 
 class fromRGB(Layer):
@@ -591,7 +564,6 @@ class fromRGB(Layer):
                  use_sn=False,
                  **kwargs):
         super(fromRGB, self).__init__(**kwargs)
-        self.res = res
         self.act = LeakyReLU(alpha=0.2)
         if use_sn:
             self.conv = SNConv2D(
@@ -615,9 +587,8 @@ class fromRGB(Layer):
                 name='scale_conv2d_{0:}x{0:}_fromRGB'.format(res))
 
     def call(self, inputs):
-        with tf.name_scope('fromRGB_{0:}x{0:}'.format(self.res)):
-            h = self.conv(inputs)
-            y = self.act(h)
+        h = self.conv(inputs)
+        y = self.act(h)
         return y
 
 class Discriminator(Layer):
@@ -654,7 +625,6 @@ class Discriminator(Layer):
         self.use_sn = use_sn
 
         self.num_blocks = res2num_blocks(res)
-        self.mylayers = {}
         self._build_layers()
 
     def res2num_filters(self, res):
@@ -663,70 +633,67 @@ class Discriminator(Layer):
     def _build_layers(self):
         res = self.res
 
-        with tf.name_scope('discriminator'):
-            self.mylayers['fromRGB'] = [None for _ in range(self.num_blocks)]
-            self.mylayers['block'] = [None for _ in range(self.num_blocks)]
-            self.mylayers['down_sample'] = [None for _ in range(self.num_blocks)]
-            self.lod = [None for _ in range(self.num_blocks)]
-            self.mylayers['fromRGB'][0] = fromRGB(
-                res, self.res2num_filters(res), use_wscale=self.use_wscale,
-                lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn)
+        setattr(self, 'fromRGB0', fromRGB(
+            res, self.res2num_filters(res), use_wscale=self.use_wscale,
+            lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
+            name='fromRGB_{0:}x{0:}'.format(res)))
+
+        with tf.name_scope('discriminator') as scope:
+            var_scope = '' if self.mode == 'static' else scope
 
             for k in range(1, self.num_blocks):
                 i = self.num_blocks - k
-                self.lod[k] = K.constant(i, tf.float32)
                 num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
-                self.mylayers['down_sample'][k] = AveragePooling2D((2, 2))
-                self.mylayers['block'][k] = discriminator_block(
+                setattr(self, 'down_sample{:}'.format(k), AveragePooling2D(
+                    (2, 2), name=var_scope + 'down_sample_{0:}x{0:}'.format(res)))
+                setattr(self, 'block{:}'.format(k), discriminator_block(
                     res, num_filters, use_wscale=self.use_wscale,
                     lr_mul=self.lr_mul, distribution=self.distribution,
-                    use_sn=self.use_sn)
+                    use_sn=self.use_sn, name=var_scope + 'discriminator_block_{0:}x{0:}'.format(res)))
 
                 res = res // 2
-                self.mylayers['fromRGB'][k] = fromRGB(
+                setattr(self, 'fromRGB{:}'.format(k), fromRGB(
                     res, self.res2num_filters(res), use_wscale=self.use_wscale,
                     lr_mul=self.lr_mul, distribution=self.distribution,
-                    use_sn=self.use_sn)
+                    use_sn=self.use_sn, name=var_scope + 'fromRGB_{0:}x{0:}'.format(res)))
 
-
-            num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
-            self.mylayers['output'] = discriminator_block_output(
-                res, num_filters, use_wscale=self.use_wscale, lr_mul=self.lr_mul,
-                distribution=self.distribution,
-                batch_std_group_size=self.batch_std_group_size,
-                batch_std_num_features=self.batch_std_num_features,
-                use_sn=self.use_sn)
+        num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
+        self.output_layer = discriminator_block_output(
+            res, num_filters, use_wscale=self.use_wscale, lr_mul=self.lr_mul,
+            distribution=self.distribution,
+            batch_std_group_size=self.batch_std_group_size,
+            batch_std_num_features=self.batch_std_num_features,
+            use_sn=self.use_sn, name='discriminator_block_output')
 
     def call(self, inputs, training=None):
         lod, image = inputs
         lod = tf.reshape(lod, [-1])[0]
 
-        with tf.name_scope('discriminator'):
-            x = self.mylayers['fromRGB'][0](image)
+        x = self.fromRGB0(image)
 
-            if self.mode == 'static':
-                for k in range(1, self.num_blocks):
-                    i = self.num_blocks - k
-                    image = self.mylayers['down_sample'][k](image)
-                    y = self.mylayers['fromRGB'][k](image)
-                    x = self.mylayers['block'][k](x)
-                    x = interpolate_clip(x, y, self.lod[k] - lod)
+        if self.mode == 'static':
+            for k in range(1, self.num_blocks):
+                lod_k = tf.cast(self.num_blocks - k, tf.float32)
+                image = getattr(self, 'down_sample{:}'.format(k))(image)
+                y = getattr(self, 'fromRGB{:}'.format(k))(image)
+                x = getattr(self, 'block{:}'.format(k))(x)
+                x = interpolate_clip(x, y, lod_k - lod)
 
-            elif self.mode == 'dynamic':
-                for k in range(1, self.num_blocks):
-                    i = self.num_blocks - k
-                    image = self.mylayers['down_sample'][k](image)
-                    @tf.function
-                    def block_i(x, image, lod):
-                        if self.lod[k] >= lod + 1:
-                            x = self.mylayers['fromRGB'][k](image)
-                        elif self.lod[k] <= lod:
-                            x = self.mylayers['block'][k](x)
-                        else:
-                            x_new = self.mylayers['block'][k](x)
-                            y_new = self.mylayers['fromRGB'][k](image)
-                            x = interpolate_clip(x_new, y_new, self.lod[k] - lod)
-                        return x
-                    x = block_i(x, image, lod)
-            outputs = self.mylayers['output'](x)
+        elif self.mode == 'dynamic':
+            for k in range(1, self.num_blocks):
+                lod_k = tf.cast(self.num_blocks - k, tf.float32)
+                image = getattr(self, 'down_sample{:}'.format(k))(image)
+                @tf.function
+                def block_i(x, image, lod):
+                    if lod_k >= lod + 1:
+                        x = getattr(self, 'fromRGB{:}'.format(k))(image)
+                    elif lod_k <= lod:
+                        x = getattr(self, 'block{:}'.format(k))(x)
+                    else:
+                        x_new = getattr(self, 'block{:}'.format(k))(x)
+                        y_new = getattr(self, 'fromRGB{:}'.format(k))(image)
+                        x = interpolate_clip(x_new, y_new, lod_k - lod)
+                    return x
+                x = block_i(x, image, lod)
+        outputs = self.output_layer(x)
         return outputs
