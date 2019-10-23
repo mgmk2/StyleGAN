@@ -108,10 +108,12 @@ class StyleGANModel(BaseModel):
             logits_fake = self.discriminator(
                 [lod, images_gen], training=True)
 
-            images_real = image_resizer(
-                images, lod, res=self.image_res, mode=self.mode)
-            logits_real = self.discriminator(
-                [lod, images_real], training=True)
+            with tf.GradientTape() as tape2:
+                tape2.watch(images)
+                images_real = image_resizer(
+                    images, lod, res=self.image_res, mode=self.mode)
+                logits_real = self.discriminator(
+                    [lod, images_real], training=True)
 
             loss_fake = tf.nn.sigmoid_cross_entropy_with_logits(
                 labels=tf.zeros_like(logits_fake), logits=logits_fake)
@@ -120,8 +122,8 @@ class StyleGANModel(BaseModel):
             base_loss = loss_fake + loss_real
             loss = tf.reduce_sum(base_loss) / self.params.batch_size
 
-            if self.params.gp_weight != 0:
-                grads, = tf.gradients(ys=logits_real, xs=images_real)
+            if self.params.gp_weight != 0.:
+                grads = tape2.gradient(logits_real, images)
                 grad_penalty = tf.reduce_sum(grads ** 2) / self.params.batch_size
                 loss += 0.5 * self.params.gp_weight * grad_penalty
 
