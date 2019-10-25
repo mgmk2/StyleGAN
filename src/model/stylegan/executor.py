@@ -44,8 +44,7 @@ class StyleGAN(ExecutorBase):
         return {'boundaries': boundaries, 'values': values}
 
     def save_weights(self, filename, epoch):
-        weights = {k: v.numpy() for k, v in self.model.get_weights().items()}
-        obj = {'epoch': epoch, 'weights': weights}
+        obj = {'epoch': epoch, 'weights': self.model.get_weights()}
         self._save(obj, filename)
 
     def load_weights(self, filename, load_optimizer=True, load_epoch=True):

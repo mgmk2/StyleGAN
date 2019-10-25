@@ -62,7 +62,8 @@ class StyleGANModel(BaseModel):
             batch_std_num_features=self.batch_std_num_features,
             use_sn=self.use_sn_in_disc)
         self.optimizer_disc = tf.optimizers.Adam(
-            self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2)
+            self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2,
+            name='Adam_disc')
 
         self.generator_synthesis = GeneratorSynthesis(
             res_out=self.image_res,
@@ -92,7 +93,8 @@ class StyleGANModel(BaseModel):
             truncation_cutoff=self.truncation_cutoff)
 
         self.optimizer_gen = tf.optimizers.Adam(
-            self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2)
+            self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2,
+            name='Adam_gen')
 
     @tf.function
     @convert_to_tfdata_single_batch
@@ -179,46 +181,70 @@ class StyleGANModel(BaseModel):
 
     @tpu_decorator
     def get_weights(self):
-        trainable_vars = self.generator_synthesis.trainable_variables + \
-                         self.generator_mapping.trainable_variables + \
-                         self.generator_mix_style.trainable_variables + \
-                         self.discriminator.trainable_variables
-        non_trainable_vars = self.generator_synthesis.non_trainable_variables + \
-                             self.generator_mapping.non_trainable_variables + \
-                             self.generator_mix_style.non_trainable_variables + \
-                             self.discriminator.non_trainable_variables
-        values = trainable_vars + non_trainable_vars + \
-                 self.optimizer_gen.weights + self.optimizer_disc.weights
-        weights = {}
-        for i, v in enumerate(values):
-            key = v.name
-            weights[key] = v
-        return weights
+        model_weights = {}
+        gen_models = [self.generator_mapping,
+                      self.generator_mix_style,
+                      self.generator_synthesis]
+        disc_models = [self.discriminator]
+        for model in gen_models + disc_models:
+            model_weights[model.name] = {}
+            for v in model.weights:
+                model_weights[model.name][v.name] = v.numpy()
 
-    @tpu_decorator
-    def set_weights(self, weights, load_optimizer=True):
-        trainable_vars = self.generator_synthesis.trainable_variables + \
-                         self.generator_mapping.trainable_variables + \
-                         self.generator_mix_style.trainable_variables + \
-                         self.discriminator.trainable_variables
-        non_trainable_vars = self.generator_synthesis.non_trainable_variables + \
-                             self.generator_mapping.non_trainable_variables + \
-                             self.generator_mix_style.non_trainable_variables + \
-                             self.discriminator.non_trainable_variables
-        tensors = trainable_vars + non_trainable_vars + \
-                  self.optimizer_gen.weights + self.optimizer_disc.weights
-        for tensor in tensors:
-            if not load_optimizer and 'Adam' in tensor.name:
-                print('Skip ' + tensor.name + ' ...')
-                continue
-            elif tensor.name in weights.keys():
+        opt_weights = {}
+        optimizers = [self.optimizer_gen, self.optimizer_disc]
+        for opt, models in zip(optimizers, [gen_models, disc_models]):
+            slot_names = opt.get_slot_names()
+            opt_weights[opt._name] = {}
+            for model in models:
+                opt_weights[opt._name][model.name] = {}
+                for v in model.trainable_variables:
+                    weights_per_var = {}
+                    for slot_name in slot_names:
+                        weights_per_var[slot_name] = opt.get_slot(v, slot_name).numpy()
+                    opt_weights[opt._name][model.name][v.name] = weights_per_var
+
+        return {'model': model_weights, 'optimizer': opt_weights}
+
+    def _set_model_weights(self, model, weights):
+        for tensor in model.weights:
+            if tensor.name in weights.keys():
                 tensor.assign(weights[tensor.name])
             else:
                 print('Skip ' + tensor.name + ' ...')
-        tensors_list = [t.name for t in tensors]
+
+        tensors_list = [t.name for t in model.weights]
         for key in weights.keys():
             if key not in tensors_list:
                 print('Not loaded ' + key + ' ...')
+
+    def _set_optimizer_weights(self, model, opt, weights):
+        for v in model.trainable_variables:
+            if v.name not in weights.keys():
+                print('Skip optimizer weights of ' + v.name + ' ...')
+                continue
+            v_opt = weights[v.name]
+            for slot_name, v_opt_slot in v_opt.items():
+                initializer = tf.initializers.Constant(v_opt_slot)
+                opt.add_slot(v, slot_name, initializer=initializer)
+
+    @tpu_decorator
+    def set_weights(self, weights, load_optimizer=True):
+        optimizers = [self.optimizer_gen, self.optimizer_disc]
+        gen_models = [self.generator_mapping,
+                      self.generator_mix_style,
+                      self.generator_synthesis]
+        disc_models = [self.discriminator]
+        opt_weights = weights['optimizer']
+        model_weights = weights['model']
+
+        for opt, models in zip(optimizers, [gen_models, disc_models]):
+            opt_name = opt._name
+            with tf.name_scope(opt_name):
+                for model in models:
+                    self._set_model_weights(model, model_weights[model.name])
+                    self._set_optimizer_weights(
+                        model, opt, opt_weights[opt_name][model.name])
 
     @tf.function
     @tpu_decorator
