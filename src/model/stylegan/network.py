@@ -106,6 +106,7 @@ class AdaIN_block(Model):
                 kernel_initializer=get_initializer(
                     distribution=distribution, use_wscale=use_wscale),
                 name=scope + 'scaled_dense_{0:}x{0:}'.format(res))
+            self.reshape_layer = Reshape((2, 1, 1, num_channels))
             self.adain_layer = AdaIN()
             self.initialize_layers()
 
@@ -117,7 +118,7 @@ class AdaIN_block(Model):
     def call(self, inputs):
         x, w = inputs
         style = self.dense(w)
-        style = tf.reshape(style, (-1, 2, 1, 1, self.num_channels))
+        style = self.reshape_layer(style)
         y = self.adain_layer((x, style))
         return y
 
@@ -491,6 +492,7 @@ class StyleMixer(Model):
         self.num_layers = 2 * num_blocks
 
         with tf.name_scope('generator_mix_style') as scope:
+            self.reshape_layer = Reshape((1, 1, 1))
             self.mix_style = MixStyle(
                 self.num_layers,
                 mixing_prob=mixing_prob,
@@ -508,7 +510,7 @@ class StyleMixer(Model):
 
     def call(self, inputs):
         lod, latent1, latent2 = inputs
-        lod_tensor = tf.reshape(lod, (-1, 1, 1, 1))
+        lod_tensor = self.reshape_layer(lod)
         return self.mix_style((latent1, latent2, lod_tensor))
 
 #===============================================================================
