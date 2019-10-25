@@ -253,9 +253,8 @@ class StyleGANModel(BaseModel):
     @tf.function
     @tpu_decorator
     def initialize_optimizer(self):
-        vars = self.discriminator.weights + self.optimizer_gen.weights
+        vars = self.optimizer_disc.weights + self.optimizer_gen.weights
         for var in vars:
             if 'iter' in var.name:
                 continue
-            elif 'Adam' in var.name:
-                var.assign(tf.zeros_like(var))
+            var.assign(tf.zeros_like(var))
