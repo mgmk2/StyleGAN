@@ -49,6 +49,7 @@ class StyleGANModel(BaseModel):
     @tpu_decorator
     def build_model(self):
 
+        print('build Discriminator...')
         self.discriminator = Discriminator(
             res=self.image_res,
             fmap_base=8192,
@@ -65,6 +66,7 @@ class StyleGANModel(BaseModel):
             self.get_learning_rate(), self.params.lr_beta1, self.params.lr_beta2,
             name='Adam_disc')
 
+        print('build Generator Synthesis...')
         self.generator_synthesis = GeneratorSynthesis(
             res_out=self.image_res,
             num_latent=self.z_dim,
@@ -75,6 +77,7 @@ class StyleGANModel(BaseModel):
             use_wscale=self.use_wscale,
             lr_mul=self.lr_mul['gen_synthesis'],
             distribution=self.params.distribution)
+        print('build Generator Mapping...')
         self.generator_mapping = GeneratorMapping(
             res_out=self.image_res,
             num_mapping_layers=self.num_mapping_layers,
@@ -84,6 +87,7 @@ class StyleGANModel(BaseModel):
             use_wscale=self.use_wscale,
             lr_mul=self.lr_mul['gen_mapping'],
             distribution=self.params.distribution)
+        print('build Generator Style Mixer...')
         self.generator_mix_style = StyleMixer(
             res_out=self.image_res,
             num_latent=self.z_dim,

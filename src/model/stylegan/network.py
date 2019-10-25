@@ -5,7 +5,7 @@ from tensorflow.keras import Input, Model
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers \
     import Conv2D, Conv2DTranspose, Dense, BatchNormalization,\
-           LeakyReLU, Reshape, Flatten, Lambda, RepeatVector, AveragePooling2D, Layer
+           LeakyReLU, Reshape, Flatten, Lambda, RepeatVector, AveragePooling2D
 
 from ...layers \
     import ScaleAddToConst, ScaleAdd, AdaIN, AddBias2D, Blur, MixStyle, \
@@ -84,7 +84,7 @@ def image_resizer(image, lod, res=32, mode=None):
 
 #===============================================================================
 
-class AdaIN_block(Layer):
+class AdaIN_block(Model):
     def __init__(self,
                  res,
                  num_channels,
@@ -121,7 +121,7 @@ class AdaIN_block(Layer):
         y = self.adain_layer((x, style))
         return y
 
-class const_block(Layer):
+class const_block(Model):
     def __init__(self,
                  res,
                  num_filters,
@@ -135,6 +135,10 @@ class const_block(Layer):
         self.num_latent = num_latent
 
         with tf.name_scope(self.name) as scope:
+            self.slice_noise0 = Lambda(lambda x: x[:, :, :, 0])
+            self.slice_noise1 = Lambda(lambda x: x[:, :, :, 1])
+            self.slice_w0 = Lambda(lambda x: x[:, 0])
+            self.slice_w1 = Lambda(lambda x: x[:, 1])
             self.scaleadd_to_const = ScaleAddToConst((res, res, num_filters))
             self.add_bias0 = AddBias2D(
                 name=scope + 'add_bias2d_{0:}x{0:}_0'.format(res))
@@ -169,10 +173,10 @@ class const_block(Layer):
 
     def call(self, inputs):
         w, noise = inputs
-        noise0 = noise[:, :, :, 0]
-        noise1 = noise[:, :, :, 1]
-        w0 = w[:, 0]
-        w1 = w[:, 1]
+        noise0 = self.slice_noise0(noise)
+        noise1 = self.slice_noise1(noise)
+        w0 = self.slice_w0(w)
+        w1 = self.slice_w1(w)
 
         h = self.scaleadd_to_const(noise0)
         h = self.add_bias0(h)
@@ -186,7 +190,7 @@ class const_block(Layer):
         y = self.adain1((h, w1))
         return y
 
-class generator_block(Layer):
+class generator_block(Model):
     def __init__(self,
                  input_shape,
                  res,
@@ -202,6 +206,11 @@ class generator_block(Layer):
         self.num_latent = num_latent
 
         with tf.name_scope(self.name) as scope:
+            self.slice_noise0 = Lambda(lambda x: x[:, :, :, 0])
+            self.slice_noise1 = Lambda(lambda x: x[:, :, :, 1])
+            self.slice_w0 = Lambda(lambda x: x[:, 0])
+            self.slice_w1 = Lambda(lambda x: x[:, 1])
+
             self.upsampling = UpSampling2D(
                 (2, 2), name='upsampling2d_{0:}x{0:}'.format(res))
             self.scaled_conv0 = ScaledConv2D(
@@ -252,10 +261,10 @@ class generator_block(Layer):
 
     def call(self, inputs):
         x, w, noise = inputs
-        noise0 = noise[:, :, :, 0]
-        noise1 = noise[:, :, :, 1]
-        w0 = w[:, 0]
-        w1 = w[:, 1]
+        noise0 = self.slice_noise0(noise)
+        noise1 = self.slice_noise1(noise)
+        w0 = self.slice_w0(w)
+        w1 = self.slice_w1(w)
 
         h = self.upsampling(x)
         h = self.scaled_conv0(h)
@@ -272,7 +281,7 @@ class generator_block(Layer):
         y = self.adain1((h, w1))
         return y
 
-class toRGB(Layer):
+class toRGB(Model):
     def __init__(self,
                  input_shape,
                  res,
@@ -504,7 +513,7 @@ class StyleMixer(Model):
 
 #===============================================================================
 
-class discriminator_block_output(Layer):
+class discriminator_block_output(Model):
     def __init__(self,
                  input_shape,
                  res,
@@ -591,7 +600,7 @@ class discriminator_block_output(Layer):
         y = self.dense1(h)
         return y
 
-class discriminator_block(Layer):
+class discriminator_block(Model):
     def __init__(self,
                  input_shape,
                  res,
@@ -668,7 +677,7 @@ class discriminator_block(Layer):
         y = self.act1(h)
         return y
 
-class fromRGB(Layer):
+class fromRGB(Model):
     def __init__(self,
                  input_shape,
                  res,
@@ -714,7 +723,7 @@ class fromRGB(Layer):
         y = self.act(h)
         return y
 
-class Discriminator(Layer):
+class Discriminator(Model):
     def __init__(self,
                 res=32,
                 num_channels=3,
