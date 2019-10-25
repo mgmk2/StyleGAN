@@ -88,21 +88,31 @@ class AdaIN_block(Layer):
     def __init__(self,
                  res,
                  num_channels,
+                 num_latent,
                  use_wscale=True,
                  lr_mul=1.0,
                  distribution='untruncated_normal',
                  **kwargs):
         super(AdaIN_block, self).__init__(**kwargs)
+        self.res = res
         self.num_channels = num_channels
+        self.num_latent = num_latent
 
-        self.dense = ScaledDense(
-            2 * num_channels,
-            use_wscale=use_wscale,
-            lr_mul=lr_mul,
-            kernel_initializer=get_initializer(
-                distribution=distribution, use_wscale=use_wscale),
-            name='scaled_dense_{0:}x{0:}'.format(res))
-        self.adain_layer = AdaIN()
+        with tf.name_scope(self.name) as scope:
+            self.dense = ScaledDense(
+                2 * num_channels,
+                use_wscale=use_wscale,
+                lr_mul=lr_mul,
+                kernel_initializer=get_initializer(
+                    distribution=distribution, use_wscale=use_wscale),
+                name=scope + 'scaled_dense_{0:}x{0:}'.format(res))
+            self.adain_layer = AdaIN()
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        x = Input((self.res, self.res, self.num_channels))
+        w = Input((self.num_latent,))
+        _ = self.call((x, w))
 
     def call(self, inputs):
         x, w = inputs
@@ -115,34 +125,47 @@ class const_block(Layer):
     def __init__(self,
                  res,
                  num_filters,
+                 num_latent,
                  use_wscale=True,
                  lr_mul=1.0,
                  distribution='untruncated_normal',
                  **kwargs):
         super(const_block, self).__init__(**kwargs)
+        self.res = res
+        self.num_latent = num_latent
 
-        self.scaleadd_to_const = ScaleAddToConst((res, res, num_filters))
-        self.add_bias0 = AddBias2D(name='add_bias2d_{0:}x{0:}_0'.format(res))
-        self.act0 = LeakyReLU(alpha=0.2)
-        self.adain0 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
-            distribution=distribution, name='AdaIN_block_{0:}x{0:}_0'.format(res))
+        with tf.name_scope(self.name) as scope:
+            self.scaleadd_to_const = ScaleAddToConst((res, res, num_filters))
+            self.add_bias0 = AddBias2D(
+                name=scope + 'add_bias2d_{0:}x{0:}_0'.format(res))
+            self.act0 = LeakyReLU(alpha=0.2)
+            self.adain0 = AdaIN_block(
+                res, num_filters, num_latent, use_wscale=use_wscale, lr_mul=lr_mul,
+                distribution=distribution, name='AdaIN_block_{0:}x{0:}_0'.format(res))
 
-        self.scaled_conv = ScaledConv2D(
-            num_filters,
-            (3, 3),
-            padding='same',
-            use_wscale=use_wscale,
-            lr_mul=lr_mul,
-            kernel_initializer=get_initializer(
-                distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-            name='scaled_conv2d_{0:}x{0:}'.format(res))
-        self.scale_add = ScaleAdd(name='scale_add_{0:}x{0:}'.format(res))
-        self.add_bias1 = AddBias2D(name='add_bias2d_{0:}x{0:}_1'.format(res))
-        self.act1 = LeakyReLU(alpha=0.2)
-        self.adain1 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
-            distribution=distribution, name='AdaIN_block_{0:}x{0:}_1'.format(res))
+            self.scaled_conv = ScaledConv2D(
+                num_filters,
+                (3, 3),
+                padding='same',
+                use_wscale=use_wscale,
+                lr_mul=lr_mul,
+                kernel_initializer=get_initializer(
+                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                name=scope + 'scaled_conv2d_{0:}x{0:}'.format(res))
+            self.scale_add = ScaleAdd(
+                name=scope + 'scale_add_{0:}x{0:}'.format(res))
+            self.add_bias1 = AddBias2D(
+                name=scope + 'add_bias2d_{0:}x{0:}_1'.format(res))
+            self.act1 = LeakyReLU(alpha=0.2)
+            self.adain1 = AdaIN_block(
+                res, num_filters, num_latent, use_wscale=use_wscale, lr_mul=lr_mul,
+                distribution=distribution, name='AdaIN_block_{0:}x{0:}_1'.format(res))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        w = Input((2, self.num_latent))
+        noise = Input((self.res, self.res, 2))
+        _ = self.call((w, noise))
 
     def call(self, inputs):
         w, noise = inputs
@@ -165,49 +188,67 @@ class const_block(Layer):
 
 class generator_block(Layer):
     def __init__(self,
+                 input_shape,
                  res,
                  num_filters,
+                 num_latent,
                  use_wscale=True,
                  lr_mul=1.0,
                  distribution='untruncated_normal',
                  **kwargs):
         super(generator_block, self).__init__(**kwargs)
+        self.x_shape = input_shape
+        self.res = res
+        self.num_latent = num_latent
 
-        self.upsampling = UpSampling2D((2, 2), name='upsampling2d_{0:}x{0:}'.format(res))
-        self.scaled_conv0 = ScaledConv2D(
-            num_filters,
-            (3, 3),
-            padding='same',
-            use_bias=False,
-            use_wscale=use_wscale,
-            lr_mul=lr_mul,
-            kernel_initializer=get_initializer(
-                distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-            name='scaled_conv2d_{0:}x{0:}_0'.format(res))
-        self.blur = Blur()
-        self.scale_add0 = ScaleAdd(name='scale_add_{0:}x{0:}_0'.format(res))
-        self.add_bias0 = AddBias2D(name='add_bias2d_{0:}x{0:}_0'.format(res))
-        self.act0 = LeakyReLU(alpha=0.2)
-        self.adain0 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
-            distribution=distribution, name='AdaIN_block_{0:}x{0:}_0'.format(res))
+        with tf.name_scope(self.name) as scope:
+            self.upsampling = UpSampling2D(
+                (2, 2), name='upsampling2d_{0:}x{0:}'.format(res))
+            self.scaled_conv0 = ScaledConv2D(
+                num_filters,
+                (3, 3),
+                padding='same',
+                use_bias=False,
+                use_wscale=use_wscale,
+                lr_mul=lr_mul,
+                kernel_initializer=get_initializer(
+                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                name=scope + 'scaled_conv2d_{0:}x{0:}_0'.format(res))
+            self.blur = Blur()
+            self.scale_add0 = ScaleAdd(
+                name=scope + 'scale_add_{0:}x{0:}_0'.format(res))
+            self.add_bias0 = AddBias2D(
+                name=scope + 'add_bias2d_{0:}x{0:}_0'.format(res))
+            self.act0 = LeakyReLU(alpha=0.2)
+            self.adain0 = AdaIN_block(
+                res, num_filters, num_latent, use_wscale=use_wscale, lr_mul=lr_mul,
+                distribution=distribution, name='AdaIN_block_{0:}x{0:}_0'.format(res))
 
-        self.scaled_conv1 = ScaledConv2D(
-            num_filters,
-            (3, 3),
-            padding='same',
-            use_bias=False,
-            use_wscale=use_wscale,
-            lr_mul=lr_mul,
-            kernel_initializer=get_initializer(
-                distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-            name='scaled_conv2d_{0:}x{0:}_1'.format(res))
-        self.scale_add1 = ScaleAdd(name='scale_add_{0:}x{0:}_1'.format(res))
-        self.add_bias1 = AddBias2D(name='add_bias2d_{0:}x{0:}_1'.format(res))
-        self.act1 = LeakyReLU(alpha=0.2)
-        self.adain1 = AdaIN_block(
-            res, num_filters, use_wscale=use_wscale, lr_mul=lr_mul,
-            distribution=distribution, name='AdaIN_block_{0:}x{0:}_1'.format(res))
+            self.scaled_conv1 = ScaledConv2D(
+                num_filters,
+                (3, 3),
+                padding='same',
+                use_bias=False,
+                use_wscale=use_wscale,
+                lr_mul=lr_mul,
+                kernel_initializer=get_initializer(
+                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                name=scope + 'scaled_conv2d_{0:}x{0:}_1'.format(res))
+            self.scale_add1 = ScaleAdd(
+                name=scope + 'scale_add_{0:}x{0:}_1'.format(res))
+            self.add_bias1 = AddBias2D(
+                name=scope + 'add_bias2d_{0:}x{0:}_1'.format(res))
+            self.act1 = LeakyReLU(alpha=0.2)
+            self.adain1 = AdaIN_block(
+                res, num_filters, num_latent, use_wscale=use_wscale, lr_mul=lr_mul,
+                distribution=distribution, name='AdaIN_block_{0:}x{0:}_1'.format(res))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        x = Input(self.x_shape)
+        w = Input((2, self.num_latent))
+        noise = Input((self.res, self.res, 2))
+        _ = self.call((x, w, noise))
 
     def call(self, inputs):
         x, w, noise = inputs
@@ -231,9 +272,43 @@ class generator_block(Layer):
         y = self.adain1((h, w1))
         return y
 
+class toRGB(Layer):
+    def __init__(self,
+                 input_shape,
+                 res,
+                 num_channels,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 **kwargs):
+        super(toRGB, self).__init__(**kwargs)
+        self.x_shape = input_shape
+        self.res = res
+
+        with tf.name_scope(self.name) as scope:
+            self.scaled_conv = ScaledConv2D(
+                num_channels,
+                (1, 1),
+                padding='same',
+                lr_mul=lr_mul,
+                kernel_initializer=get_initializer(
+                    distribution=distribution, use_wscale=use_wscale),
+                name=scope + 'scaled_conv2d_{0:}x{0:}_toRGB'.format(res))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        inputs = Input(self.x_shape)
+        _ = self.call(inputs)
+
+    def call(self, inputs):
+        with tf.name_scope('toRGB_{0:}x{0:}'.format(self.res)):
+            y = self.scaled_conv(inputs)
+        return y
+
 class GeneratorSynthesis(Model):
     def __init__(self, res_out=32,
                 num_channels=3,
+                num_latent=512,
                 fmap_base=8192,
                 fmap_decay=1.0,
                 fmap_max=512,
@@ -244,6 +319,7 @@ class GeneratorSynthesis(Model):
                 **kwargs):
         super(GeneratorSynthesis, self).__init__(**kwargs)
         self.num_channels = num_channels
+        self.num_latent = num_latent
         self.fmap_base = fmap_base
         self.fmap_decay = fmap_decay
         self.fmap_max = fmap_max
@@ -266,38 +342,39 @@ class GeneratorSynthesis(Model):
             self.fmap_max)
 
     def _build_layers(self):
-        res = 4
-
-        self.const_block = const_block(
-            res, self.res2num_filters(res), use_wscale=self.use_wscale,
-            lr_mul=self.lr_mul, distribution=self.distribution,
-            name='const_block')
-        self.image_out_layer0 = ScaledConv2D(
-            self.num_channels, (1, 1), padding='same',
-            use_wscale=self.use_wscale, lr_mul=self.lr_mul,
-            kernel_initializer=get_initializer(
-                distribution=self.distribution, use_wscale=self.use_wscale),
-            name='scaled_conv2d_{0:}x{0:}_toRGB'.format(res))
-
         with tf.name_scope('generator_synthesis') as scope:
-            var_scope = '' if self.mode == 'static' else scope
+            res = 4
+            input_shape = (res, res, self.res2num_filters(res))
+            self.const_block = const_block(
+                res, self.res2num_filters(res), self.num_latent,
+                use_wscale=self.use_wscale, lr_mul=self.lr_mul,
+                distribution=self.distribution,
+                name='const_block')
+            self.image_out_layer0 = toRGB(
+                input_shape, res, self.num_channels, use_wscale=self.use_wscale,
+                lr_mul=self.lr_mul, distribution=self.distribution,
+                name='toRGB_{0:}x{0:}'.format(res))
+
             for i in range(1, self.num_blocks):
+                input_shape = (res, res, self.res2num_filters(res))
                 res *= 2
                 setattr(self, 'block{:}'.format(i), generator_block(
-                    res, self.res2num_filters(res), use_wscale=self.use_wscale,
+                    input_shape, res, self.res2num_filters(res),
+                    self.num_latent, use_wscale=self.use_wscale,
                     lr_mul=self.lr_mul, distribution=self.distribution,
-                    name=var_scope + 'generator_block_{0:}x{0:}'.format(res)))
+                    name='generator_block_{0:}x{0:}'.format(res)))
 
-                setattr(self, 'toRGB{:}'.format(i), ScaledConv2D(
-                    self.num_channels, (1, 1), padding='same',
-                    use_wscale=self.use_wscale, lr_mul=self.lr_mul,
-                    kernel_initializer=get_initializer(
-                        distribution=self.distribution, use_wscale=self.use_wscale),
-                    name=var_scope + 'scaled_conv2d_{0:}x{0:}_toRGB'.format(res)))
+                input_shape = (res, res, self.res2num_filters(res))
+                setattr(self, 'toRGB{:}'.format(i), toRGB(
+                    input_shape, res, self.num_channels, use_wscale=self.use_wscale,
+                    lr_mul=self.lr_mul, distribution=self.distribution,
+                    name='toRGB_{0:}x{0:}'.format(res)))
+
                 setattr(self, 'image_out_layer{:}'.format(i), UpSampling2D(
-                    (2, 2), name=var_scope + 'upsampling2d_image_out_{0:}x{0:}'.format(res)))
+                    (2, 2), name='upsampling2d_image_out_{0:}x{0:}'.format(res)))
+
                 setattr(self, 'x_out_layer{:}'.format(i), UpSampling2D(
-                    (2, 2), name=var_scope + 'upsampling2d_x_out_{0:}x{0:}'.format(res)))
+                    (2, 2), name='upsampling2d_x_out_{0:}x{0:}'.format(res)))
 
     def call(self, inputs, training=None):
         lod, w, *noise = inputs
@@ -346,6 +423,7 @@ class GeneratorMapping(Model):
                  res_out=32,
                  num_mapping_layers=8,
                  num_mapping_latent=512,
+                 num_input_latent=512,
                  num_output_latent=512,
                  use_wscale=True,
                  lr_mul=1.0,
@@ -353,27 +431,34 @@ class GeneratorMapping(Model):
                  **kwargs):
         super(GeneratorMapping, self).__init__(**kwargs)
         self.num_mapping_layers = num_mapping_layers
+        self.num_input_latent = num_input_latent
 
         num_blocks = res2num_blocks(res_out)
         num_repeat_output = 2 * num_blocks
 
-        self.pixel_norm = PixelNormalization()
-        self.repeat_vector = RepeatVector(num_repeat_output)
+        with tf.name_scope('generator_mapping') as scope:
+            self.pixel_norm = PixelNormalization()
+            self.repeat_vector = RepeatVector(num_repeat_output)
 
-        for i in range(num_mapping_layers):
-            if i == num_mapping_layers - 1:
-                num_latent = num_output_latent
-            else:
-                num_latent = num_mapping_latent
+            for i in range(num_mapping_layers):
+                if i == num_mapping_layers - 1:
+                    num_latent = num_output_latent
+                else:
+                    num_latent = num_mapping_latent
 
-            setattr(self, 'scaled_dense{:}'.format(i), ScaledDense(
-                num_latent,
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scaled_dense_{:}'.format(i)))
-            setattr(self, 'act{:}'.format(i), LeakyReLU(alpha=0.2))
+                setattr(self, 'scaled_dense{:}'.format(i), ScaledDense(
+                    num_latent,
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'scaled_dense_{:}'.format(i)))
+                setattr(self, 'act{:}'.format(i), LeakyReLU(alpha=0.2))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        inputs = Input((self.num_input_latent,))
+        _ = self.call(inputs)
 
     def call(self, inputs):
         h = self.pixel_norm(inputs)
@@ -385,21 +470,32 @@ class GeneratorMapping(Model):
 
 class StyleMixer(Model):
     def __init__(self, res_out=32,
+                 num_latent=512,
                  mixing_prob=0.9,
                  latent_avg_beta=0.995,
                  truncation_psi=0.7,
                  truncation_cutoff=8,
                  **kwargs):
         super(StyleMixer, self).__init__(**kwargs)
+        self.num_latent = num_latent
         num_blocks = res2num_blocks(res_out)
-        num_layers = 2 * num_blocks
+        self.num_layers = 2 * num_blocks
 
-        self.mix_style = MixStyle(
-            num_layers,
-            mixing_prob=mixing_prob,
-            latent_avg_beta=latent_avg_beta,
-            truncation_psi=truncation_psi,
-            truncation_cutoff=truncation_cutoff)
+        with tf.name_scope('generator_mix_style') as scope:
+            self.mix_style = MixStyle(
+                self.num_layers,
+                mixing_prob=mixing_prob,
+                latent_avg_beta=latent_avg_beta,
+                truncation_psi=truncation_psi,
+                truncation_cutoff=truncation_cutoff,
+                name=scope + 'mix_style')
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        latent1 = Input((self.num_layers, self.num_latent,))
+        latent2 = Input((self.num_layers, self.num_latent,))
+        lod = Input((1,))
+        _ = self.call((lod, latent1, latent2))
 
     def call(self, inputs):
         lod, latent1, latent2 = inputs
@@ -410,6 +506,7 @@ class StyleMixer(Model):
 
 class discriminator_block_output(Layer):
     def __init__(self,
+                 input_shape,
                  res,
                  num_filters,
                  use_wscale=True,
@@ -420,61 +517,69 @@ class discriminator_block_output(Layer):
                  use_sn=False,
                  **kwargs):
         super(discriminator_block_output, self).__init__(**kwargs)
-        self.batch_stddev = BatchStddev(
-            group_size=batch_std_group_size, num_features=batch_std_num_features)
-        self.act0 = LeakyReLU(alpha=0.2)
-        self.act1 = LeakyReLU(alpha=0.2)
-        self.flatten = Flatten()
+        self.x_shape = input_shape
 
-        if use_sn:
-            self.conv = SNConv2D(
-                num_filters[0],
-                (3, 3),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='sn_conv2d_{0:}x{0:}'.format(res))
-            self.dense0 = SNDense(
-                num_filters[1],
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='sn_dense_{0:}x{0:}_0'.format(res))
-            self.dense1 = SNDense(
-                1,
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale),
-                name='sn_dense_{0:}x{0:}_1'.format(res))
+        with tf.name_scope(self.name) as scope:
+            self.batch_stddev = BatchStddev(
+                group_size=batch_std_group_size, num_features=batch_std_num_features)
+            self.act0 = LeakyReLU(alpha=0.2)
+            self.act1 = LeakyReLU(alpha=0.2)
+            self.flatten = Flatten()
 
-        else:
-            self.conv = ScaledConv2D(
-                num_filters[0],
-                (3, 3),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scaled_conv2d_{0:}x{0:}'.format(res))
-            self.dense0 = ScaledDense(
-                num_filters[1],
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scaled_dense_{0:}x{0:}_0'.format(res))
-            self.dense1 = ScaledDense(
-                1,
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale),
-                name='scaled_dense_{0:}x{0:}_1'.format(res))
+            if use_sn:
+                self.conv = SNConv2D(
+                    num_filters[0],
+                    (3, 3),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'sn_conv2d_{0:}x{0:}'.format(res))
+                self.dense0 = SNDense(
+                    num_filters[1],
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'sn_dense_{0:}x{0:}_0'.format(res))
+                self.dense1 = SNDense(
+                    1,
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale),
+                    name=scope + 'sn_dense_{0:}x{0:}_1'.format(res))
+
+            else:
+                self.conv = ScaledConv2D(
+                    num_filters[0],
+                    (3, 3),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'scaled_conv2d_{0:}x{0:}'.format(res))
+                self.dense0 = ScaledDense(
+                    num_filters[1],
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'scaled_dense_{0:}x{0:}_0'.format(res))
+                self.dense1 = ScaledDense(
+                    1,
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale),
+                    name=scope + 'scaled_dense_{0:}x{0:}_1'.format(res))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        inputs = Input(self.x_shape)
+        _ = self.call(inputs)
 
     def call(self, inputs):
         h = self.batch_stddev(inputs)
@@ -488,6 +593,7 @@ class discriminator_block_output(Layer):
 
 class discriminator_block(Layer):
     def __init__(self,
+                 input_shape,
                  res,
                  num_filters,
                  use_wscale=True,
@@ -496,52 +602,60 @@ class discriminator_block(Layer):
                  use_sn=False,
                  **kwargs):
         super(discriminator_block, self).__init__(**kwargs)
+        self.x_shape = input_shape
 
-        self.act0 = LeakyReLU(alpha=0.2)
-        self.act1 = LeakyReLU(alpha=0.2)
-        self.blur = Blur()
-        self.down_sample = AveragePooling2D((2, 2))
-        self.add_bias = AddBias2D(name='add_bias2d_{0:}x{0:}'.format(res))
+        with tf.name_scope(self.name) as scope:
+            self.act0 = LeakyReLU(alpha=0.2)
+            self.act1 = LeakyReLU(alpha=0.2)
+            self.blur = Blur()
+            self.down_sample = AveragePooling2D((2, 2))
+            self.add_bias = AddBias2D(
+                name=scope + 'add_bias2d_{0:}x{0:}'.format(res))
 
-        if use_sn:
-            self.conv0 = SNConv2D(
-                num_filters[0],
-                (3, 3),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='sn_conv2d_{0:}x{0:}_0'.format(res))
-            self.conv1 = SNConv2D(
-                num_filters[1],
-                (3, 3),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='sn_conv2d_{0:}x{0:}_1'.format(res))
+            if use_sn:
+                self.conv0 = SNConv2D(
+                    num_filters[0],
+                    (3, 3),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'sn_conv2d_{0:}x{0:}_0'.format(res))
+                self.conv1 = SNConv2D(
+                    num_filters[1],
+                    (3, 3),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'sn_conv2d_{0:}x{0:}_1'.format(res))
 
-        else:
-            self.conv0 = ScaledConv2D(
-                num_filters[0],
-                (3, 3),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scaled_conv2d_{0:}x{0:}_0'.format(res))
-            self.conv1 = ScaledConv2D(
-                num_filters[1],
-                (3, 3),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scaled_conv2d_{0:}x{0:}_1'.format(res))
+            else:
+                self.conv0 = ScaledConv2D(
+                    num_filters[0],
+                    (3, 3),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'scaled_conv2d_{0:}x{0:}_0'.format(res))
+                self.conv1 = ScaledConv2D(
+                    num_filters[1],
+                    (3, 3),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'scaled_conv2d_{0:}x{0:}_1'.format(res))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        inputs = Input(self.x_shape)
+        _ = self.call(inputs)
 
     def call(self, inputs):
         h = self.conv0(inputs)
@@ -556,6 +670,7 @@ class discriminator_block(Layer):
 
 class fromRGB(Layer):
     def __init__(self,
+                 input_shape,
                  res,
                  num_filters,
                  use_wscale=True,
@@ -564,27 +679,35 @@ class fromRGB(Layer):
                  use_sn=False,
                  **kwargs):
         super(fromRGB, self).__init__(**kwargs)
-        self.act = LeakyReLU(alpha=0.2)
-        if use_sn:
-            self.conv = SNConv2D(
-                num_filters,
-                (1, 1),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='sn_conv2d_{0:}x{0:}_fromRGB'.format(res))
-        else:
-            self.conv = ScaledConv2D(
-                num_filters,
-                (1, 1),
-                padding='same',
-                use_wscale=use_wscale,
-                lr_mul=lr_mul,
-                kernel_initializer=get_initializer(
-                    distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
-                name='scale_conv2d_{0:}x{0:}_fromRGB'.format(res))
+        self.x_shape = input_shape
+
+        with tf.name_scope(self.name) as scope:
+            self.act = LeakyReLU(alpha=0.2)
+            if use_sn:
+                self.conv = SNConv2D(
+                    num_filters,
+                    (1, 1),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'sn_conv2d_{0:}x{0:}_fromRGB'.format(res))
+            else:
+                self.conv = ScaledConv2D(
+                    num_filters,
+                    (1, 1),
+                    padding='same',
+                    use_wscale=use_wscale,
+                    lr_mul=lr_mul,
+                    kernel_initializer=get_initializer(
+                        distribution=distribution, use_wscale=use_wscale, relu_alpha=0.2),
+                    name=scope + 'scale_conv2d_{0:}x{0:}_fromRGB'.format(res))
+            self.initialize_layers()
+
+    def initialize_layers(self):
+        inputs = Input(self.x_shape)
+        _ = self.call(inputs)
 
     def call(self, inputs):
         h = self.conv(inputs)
@@ -594,6 +717,7 @@ class fromRGB(Layer):
 class Discriminator(Layer):
     def __init__(self,
                 res=32,
+                num_channels=3,
                 fmap_base=8192,
                 fmap_decay=1.0,
                 fmap_max=512,
@@ -607,6 +731,7 @@ class Discriminator(Layer):
                 **kwargs):
         super(Discriminator, self).__init__(**kwargs)
         self.res = res
+        self.num_channels = num_channels
         self.fmap_base = fmap_base
         self.fmap_decay = fmap_decay
         self.fmap_max = fmap_max
@@ -632,38 +757,41 @@ class Discriminator(Layer):
 
     def _build_layers(self):
         res = self.res
+        input_shape = (res, res, self.num_channels)
 
-        setattr(self, 'fromRGB0', fromRGB(
-            res, self.res2num_filters(res), use_wscale=self.use_wscale,
-            lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
-            name='fromRGB_{0:}x{0:}'.format(res)))
-
-        with tf.name_scope('discriminator') as scope:
-            var_scope = '' if self.mode == 'static' else scope
+        with tf.name_scope('discriminator'):
+            setattr(self, 'fromRGB0', fromRGB(
+                input_shape, res, self.res2num_filters(res), use_wscale=self.use_wscale,
+                lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
+                name='fromRGB_{0:}x{0:}'.format(res)))
 
             for k in range(1, self.num_blocks):
                 i = self.num_blocks - k
+                input_shape = (res, res, self.res2num_filters(res))
                 num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
                 setattr(self, 'down_sample{:}'.format(k), AveragePooling2D(
-                    (2, 2), name=var_scope + 'down_sample_{0:}x{0:}'.format(res)))
+                    (2, 2), name='down_sample_{0:}x{0:}'.format(res)))
                 setattr(self, 'block{:}'.format(k), discriminator_block(
-                    res, num_filters, use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution,
-                    use_sn=self.use_sn, name=var_scope + 'discriminator_block_{0:}x{0:}'.format(res)))
+                    input_shape, res, num_filters, use_wscale=self.use_wscale,
+                    lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
+                    name='discriminator_block_{0:}x{0:}'.format(res)))
 
                 res = res // 2
+                input_shape = (res, res, self.num_channels)
                 setattr(self, 'fromRGB{:}'.format(k), fromRGB(
-                    res, self.res2num_filters(res), use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution,
-                    use_sn=self.use_sn, name=var_scope + 'fromRGB_{0:}x{0:}'.format(res)))
+                    input_shape, res, self.res2num_filters(res),
+                    use_wscale=self.use_wscale, lr_mul=self.lr_mul,
+                    distribution=self.distribution, use_sn=self.use_sn,
+                    name='fromRGB_{0:}x{0:}'.format(res)))
 
-        num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
-        self.output_layer = discriminator_block_output(
-            res, num_filters, use_wscale=self.use_wscale, lr_mul=self.lr_mul,
-            distribution=self.distribution,
-            batch_std_group_size=self.batch_std_group_size,
-            batch_std_num_features=self.batch_std_num_features,
-            use_sn=self.use_sn, name='discriminator_block_output')
+            input_shape = (res, res, self.res2num_filters(res))
+            num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
+            self.output_layer = discriminator_block_output(
+                input_shape, res, num_filters, use_wscale=self.use_wscale,
+                lr_mul=self.lr_mul, distribution=self.distribution,
+                batch_std_group_size=self.batch_std_group_size,
+                batch_std_num_features=self.batch_std_num_features,
+                use_sn=self.use_sn, name='discriminator_block_output')
 
     def call(self, inputs, training=None):
         lod, image = inputs

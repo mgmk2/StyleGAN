@@ -66,6 +66,7 @@ class StyleGANModel(BaseModel):
 
         self.generator_synthesis = GeneratorSynthesis(
             res_out=self.image_res,
+            num_latent=self.z_dim,
             fmap_base=8192,
             fmap_decay=1.0,
             fmap_max=self.z_dim,
@@ -77,12 +78,14 @@ class StyleGANModel(BaseModel):
             res_out=self.image_res,
             num_mapping_layers=self.num_mapping_layers,
             num_mapping_latent=self.z_dim,
+            num_input_latent=self.z_dim,
             num_output_latent=self.z_dim,
             use_wscale=self.use_wscale,
             lr_mul=self.lr_mul['gen_mapping'],
             distribution=self.params.distribution)
         self.generator_mix_style = StyleMixer(
             res_out=self.image_res,
+            num_latent=self.z_dim,
             mixing_prob=self.mixing_prob,
             latent_avg_beta=self.latent_avg_beta,
             truncation_psi=self.truncation_psi,
@@ -212,6 +215,10 @@ class StyleGANModel(BaseModel):
                 tensor.assign(weights[tensor.name])
             else:
                 print('Skip ' + tensor.name + ' ...')
+        tensors_list = [t.name for t in tensors]
+        for key in weights.keys():
+            if key not in tensors_list:
+                print('Not loaded ' + key + ' ...')
 
     @tf.function
     @tpu_decorator
