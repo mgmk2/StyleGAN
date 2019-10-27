@@ -771,10 +771,10 @@ class Discriminator(Model):
         input_shape = (res, res, self.num_channels)
 
         with tf.name_scope('discriminator'):
-            setattr(self, 'fromRGB0', fromRGB(
+            self.fromRGB0 = fromRGB(
                 input_shape, res, self.res2num_filters(res), use_wscale=self.use_wscale,
                 lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
-                name='fromRGB_{0:}x{0:}'.format(res)))
+                name='fromRGB_{0:}x{0:}'.format(res))
 
             for k in range(1, self.num_blocks):
                 i = self.num_blocks - k
