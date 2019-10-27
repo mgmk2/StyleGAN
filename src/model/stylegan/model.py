@@ -247,8 +247,9 @@ class StyleGANModel(BaseModel):
             with tf.name_scope(opt_name):
                 for model in models:
                     self._set_model_weights(model, model_weights[model.name])
-                    self._set_optimizer_weights(
-                        model, opt, opt_weights[opt_name][model.name])
+                    if load_optimizer:
+                        self._set_optimizer_weights(
+                            model, opt, opt_weights[opt_name][model.name])
 
     @tf.function
     @tpu_decorator
