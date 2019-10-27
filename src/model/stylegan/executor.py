@@ -44,14 +44,22 @@ class StyleGAN(ExecutorBase):
         return {'boundaries': boundaries, 'values': values}
 
     def save_weights(self, filename, epoch):
-        obj = {'epoch': epoch, 'weights': self.model.get_weights()}
+        obj = {'epoch': epoch,
+               'weights': self.model.get_weights(),
+               'history': self.history}
         self._save(obj, filename)
 
-    def load_weights(self, filename, load_optimizer=True, load_epoch=True):
+    def load_weights(self,
+                     filename,
+                     load_optimizer=True,
+                     load_epoch=True,
+                     load_history=True):
         weights = self._load(filename)
         print('Load weights from ' + filename + '.pkl...')
         if load_epoch:
             self.params.start_epoch = weights['epoch']
+        if load_history:
+            self.history = weights['history']
         self.model.set_weights(weights['weights'], load_optimizer=load_optimizer)
 
     def get_maximum_lod(self):
