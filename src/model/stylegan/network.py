@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow.keras import Input, Model
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers \
-    import Conv2D, Conv2DTranspose, Dense, BatchNormalization,\
+    import Conv2D, Conv2DTranspose, Dense, BatchNormalization, Layer,\
            LeakyReLU, Reshape, Flatten, Lambda, RepeatVector, AveragePooling2D
 
 from ...layers \
