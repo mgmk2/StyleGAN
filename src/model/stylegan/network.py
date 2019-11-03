@@ -140,7 +140,8 @@ class const_block(Model):
             self.slice_noise1 = Lambda(lambda x: x[:, :, :, 1])
             self.slice_w0 = Lambda(lambda x: x[:, 0])
             self.slice_w1 = Lambda(lambda x: x[:, 1])
-            self.scaleadd_to_const = ScaleAddToConst((res, res, num_filters))
+            self.scaleadd_to_const = ScaleAddToConst(
+                (res, res, num_filters), name=scope + 'scaleadd_to_const')
             self.add_bias0 = AddBias2D(
                 name=scope + 'add_bias2d_{0:}x{0:}_0'.format(res))
             self.act0 = LeakyReLU(alpha=0.2)
@@ -315,6 +316,117 @@ class toRGB(Model):
             y = self.scaled_conv(inputs)
         return y
 
+class SynthesisBlock(Model):
+    def __init__(self, lod,
+                 res=32,
+                 num_channels=3,
+                 num_latent=512,
+                 fmap_base=8192,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 **kwargs):
+        super(SynthesisBlock, self).__init__(**kwargs)
+        self.lod = tf.cast(lod, tf.float32)
+
+        def res2num_filters(res):
+            return min(int(fmap_base * (2.0 / res) ** fmap_decay), fmap_max)
+
+        input_shape = (res // 2, res // 2, res2num_filters(res // 2))
+        self.gen_block = generator_block(
+            input_shape, res, res2num_filters(res),
+            num_latent, use_wscale=use_wscale,
+            lr_mul=lr_mul, distribution=distribution,
+            name='generator_block_{0:}x{0:}'.format(res))
+
+        input_shape = (res, res, res2num_filters(res))
+        self.toRGB = toRGB(
+            input_shape, res, num_channels, use_wscale=use_wscale,
+            lr_mul=lr_mul, distribution=distribution,
+            name='toRGB_{0:}x{0:}'.format(res))
+
+        self.image_out_layer = UpSampling2D(
+            (2, 2), name='upsampling2d_image_out_{0:}x{0:}'.format(res))
+        self.x_out_layer = UpSampling2D(
+            (2, 2), name='upsampling2d_x_out_{0:}x{0:}'.format(res))
+
+class DynamicSynthesisBlock(SynthesisBlock):
+    def __init__(self, lod,
+                 res=32,
+                 num_channels=3,
+                 num_latent=512,
+                 fmap_base=8192,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 **kwargs):
+        super(DynamicSynthesisBlock, self).__init__(
+            lod,
+            res=res,
+            num_channels=num_channels,
+            num_latent=num_latent,
+            fmap_base=fmap_base,
+            fmap_decay=fmap_decay,
+            fmap_max=fmap_max,
+            use_wscale=use_wscale,
+            lr_mul=lr_mul,
+            distribution=distribution,
+            **kwargs)
+
+    @tf.function
+    def call(self, inputs):
+        x, image_out, w, noise, lod = inputs
+        if self.lod >= lod + 1:
+            x = self.x_out_layer(x)
+            image_out = self.image_out_layer(image_out)
+        elif self.lod <= lod:
+            x = self.gen_block((x, w, noise))
+            image_out = self.toRGB(x)
+        else:
+            x = self.gen_block((x, w, noise))
+            x_new = self.toRGB(x)
+            image_out_new = self.image_out_layer(image_out)
+            image_out = interpolate_clip(x_new, image_out_new, self.lod - lod)
+        return x, image_out
+
+class StaticSynthesisBlock(SynthesisBlock):
+    def __init__(self, lod,
+                 res=32,
+                 num_channels=3,
+                 num_latent=512,
+                 fmap_base=8192,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 **kwargs):
+        super(StaticSynthesisBlock, self).__init__(
+            lod,
+            res=res,
+            num_channels=num_channels,
+            num_latent=num_latent,
+            fmap_base=fmap_base,
+            fmap_decay=fmap_decay,
+            fmap_max=fmap_max,
+            use_wscale=use_wscale,
+            lr_mul=lr_mul,
+            distribution=distribution,
+            **kwargs)
+
+    @tf.function
+    def call(self, inputs):
+        x, image_out, w, noise, lod = inputs
+        image_out = self.image_out_layer(image_out)
+        x = self.gen_block((x, w, noise))
+        y = self.toRGB(x)
+        image_out = interpolate_clip(y, image_out, self.lod - lod)
+        return x, image_out
+
 class GeneratorSynthesis(Model):
     def __init__(self, res_out=32,
                 num_channels=3,
@@ -328,104 +440,66 @@ class GeneratorSynthesis(Model):
                 distribution='untruncated_normal',
                 **kwargs):
         super(GeneratorSynthesis, self).__init__(**kwargs)
-        self.num_channels = num_channels
-        self.num_latent = num_latent
-        self.fmap_base = fmap_base
-        self.fmap_decay = fmap_decay
-        self.fmap_max = fmap_max
 
         if mode is not None and mode not in ['dynamic', 'static']:
             raise ValueError('Unknown mode: ' + mode)
-        self.mode = 'dynamic' if mode is None else mode
-
-        self.use_wscale = use_wscale
-        self.lr_mul = lr_mul
-        self.distribution = distribution
+        mode = 'dynamic' if mode is None else mode
 
         self.num_blocks = res2num_blocks(res_out)
-        self.mylayers = {}
-        self._build_layers()
 
-    def res2num_filters(self, res):
-        return min(
-            int(self.fmap_base * (2.0 / res) ** self.fmap_decay),
-            self.fmap_max)
+        def res2num_filters(res):
+            return min(int(fmap_base * (2.0 / res) ** fmap_decay), fmap_max)
 
-    def _build_layers(self):
         with tf.name_scope('generator_synthesis') as scope:
             res = 4
-            input_shape = (res, res, self.res2num_filters(res))
+            input_shape = (res, res, res2num_filters(res))
             self.const_block = const_block(
-                res, self.res2num_filters(res), self.num_latent,
-                use_wscale=self.use_wscale, lr_mul=self.lr_mul,
-                distribution=self.distribution,
-                name='const_block')
+                res, res2num_filters(res), num_latent,
+                use_wscale=use_wscale, lr_mul=lr_mul,
+                distribution=distribution, name='const_block')
             self.image_out_layer0 = toRGB(
-                input_shape, res, self.num_channels, use_wscale=self.use_wscale,
-                lr_mul=self.lr_mul, distribution=self.distribution,
+                input_shape, res, num_channels, use_wscale=use_wscale,
+                lr_mul=lr_mul, distribution=distribution,
                 name='toRGB_{0:}x{0:}'.format(res))
+            self.slice_w0 = Lambda(lambda x: x[:, :2])
 
             for i in range(1, self.num_blocks):
-                input_shape = (res, res, self.res2num_filters(res))
+                setattr(self, 'slice_w{:}'.format(i),
+                    Lambda(lambda x: x[:, 2 * i:2 * (i + 1)]))
                 res *= 2
-                setattr(self, 'block{:}'.format(i), generator_block(
-                    input_shape, res, self.res2num_filters(res),
-                    self.num_latent, use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution,
-                    name='generator_block_{0:}x{0:}'.format(res)))
-
-                input_shape = (res, res, self.res2num_filters(res))
-                setattr(self, 'toRGB{:}'.format(i), toRGB(
-                    input_shape, res, self.num_channels, use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution,
-                    name='toRGB_{0:}x{0:}'.format(res)))
-
-                setattr(self, 'image_out_layer{:}'.format(i), UpSampling2D(
-                    (2, 2), name='upsampling2d_image_out_{0:}x{0:}'.format(res)))
-
-                setattr(self, 'x_out_layer{:}'.format(i), UpSampling2D(
-                    (2, 2), name='upsampling2d_x_out_{0:}x{0:}'.format(res)))
+                if mode == 'static':
+                    setattr(self, 'block{:}'.format(i), StaticSynthesisBlock(
+                        i, res=res, num_channels=num_channels,
+                        num_latent=num_latent,
+                        fmap_base=fmap_base,
+                        fmap_decay=fmap_decay,
+                        fmap_max=fmap_max,
+                        use_wscale=use_wscale,
+                        lr_mul=lr_mul,
+                        distribution=distribution))
+                elif mode == 'dynamic':
+                    setattr(self, 'block{:}'.format(i), DynamicSynthesisBlock(
+                        i, res=res, num_channels=num_channels,
+                        num_latent=num_latent,
+                        fmap_base=fmap_base,
+                        fmap_decay=fmap_decay,
+                        fmap_max=fmap_max,
+                        use_wscale=use_wscale,
+                        lr_mul=lr_mul,
+                        distribution=distribution))
 
     def call(self, inputs, training=None):
         lod, w, *noise = inputs
         lod = tf.reshape(lod, [-1])[0]
 
-        w0 = w[:, :2]
+        w0 = self.slice_w0(w)
         x = self.const_block((w0, noise[0]))
         image_out = self.image_out_layer0(x)
 
-        if self.mode == 'static':
-            for i in range(1, self.num_blocks):
-                lod_i = tf.cast(i, tf.float32)
-                image_out = getattr(self, 'image_out_layer{:}'.format(i))(image_out)
-                w_i = w[:, i * 2:(i + 1) * 2]
-                x = getattr(self, 'block{:}'.format(i))((x, w_i, noise[i]))
-                y = getattr(self, 'toRGB{:}'.format(i))(x)
-                image_out = interpolate_clip(y, image_out, lod_i - lod)
-
-        elif self.mode == 'dynamic':
-            for i in range(1, self.num_blocks):
-                lod_i = tf.cast(i, tf.float32)
-                @tf.function
-                def block_i(x, image_out, w, noise, lod):
-                    if lod_i >= lod + 1:
-                        x = getattr(self, 'x_out_layer{:}'.format(i))(x)
-                        image_out = getattr(
-                            self, 'image_out_layer{:}'.format(i))(image_out)
-                    elif lod_i <= lod:
-                        w_i = w[:, i * 2:(i + 1) * 2]
-                        x = getattr(self, 'block{:}'.format(i))((x, w_i, noise[i]))
-                        image_out = getattr(self, 'toRGB{:}'.format(i))(x)
-                    else:
-                        w_i = w[:, i * 2:(i + 1) * 2]
-                        x = getattr(self, 'block{:}'.format(i))((x, w_i, noise[i]))
-                        x_new = getattr(self, 'toRGB{:}'.format(i))(x)
-                        image_out_new = getattr(
-                            self, 'image_out_layer{:}'.format(i))(image_out)
-                        image_out = interpolate_clip(
-                            x_new, image_out_new, lod_i - lod)
-                    return x, image_out
-                x, image_out = block_i(x, image_out, w, noise, lod)
+        for i in range(1, self.num_blocks):
+            w_i = getattr(self, 'slice_w{:}'.format(i))(w)
+            x, image_out = getattr(self, 'block{:}'.format(i))(
+                (x, image_out, w_i, noise[i], lod), training=training)
         return image_out
 
 class GeneratorMapping(Model):
