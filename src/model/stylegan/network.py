@@ -377,21 +377,23 @@ class DynamicSynthesisBlock(SynthesisBlock):
             distribution=distribution,
             **kwargs)
 
-    @tf.function
     def call(self, inputs):
-        x, image_out, w, noise, lod = inputs
-        if self.lod >= lod + 1:
-            x = self.x_out_layer(x)
-            image_out = self.image_out_layer(image_out)
-        elif self.lod <= lod:
-            x = self.gen_block((x, w, noise))
-            image_out = self.toRGB(x)
-        else:
-            x = self.gen_block((x, w, noise))
-            x_new = self.toRGB(x)
-            image_out_new = self.image_out_layer(image_out)
-            image_out = interpolate_clip(x_new, image_out_new, self.lod - lod)
-        return x, image_out
+        @tf.function
+        def _call(inputs):
+            x, image_out, w, noise, lod = inputs
+            if self.lod >= lod + 1:
+                x = self.x_out_layer(x)
+                image_out = self.image_out_layer(image_out)
+            elif self.lod <= lod:
+                x = self.gen_block((x, w, noise))
+                image_out = self.toRGB(x)
+            else:
+                x = self.gen_block((x, w, noise))
+                x_new = self.toRGB(x)
+                image_out_new = self.image_out_layer(image_out)
+                image_out = interpolate_clip(x_new, image_out_new, self.lod - lod)
+            return x, image_out
+        return _call(inputs)
 
 class StaticSynthesisBlock(SynthesisBlock):
     def __init__(self, lod,
@@ -418,14 +420,15 @@ class StaticSynthesisBlock(SynthesisBlock):
             distribution=distribution,
             **kwargs)
 
-    @tf.function
     def call(self, inputs):
-        x, image_out, w, noise, lod = inputs
-        image_out = self.image_out_layer(image_out)
-        x = self.gen_block((x, w, noise))
-        y = self.toRGB(x)
-        image_out = interpolate_clip(y, image_out, self.lod - lod)
-        return x, image_out
+        @tf.function
+        def _call(x, image_out, w, noise, lod):
+            image_out = self.image_out_layer(image_out)
+            x = self.gen_block((x, w, noise))
+            y = self.toRGB(x)
+            image_out = interpolate_clip(y, image_out, self.lod - lod)
+            return x, image_out
+        return _call(*inputs)
 
 class GeneratorSynthesis(Model):
     def __init__(self, res_out=32,
@@ -799,6 +802,117 @@ class fromRGB(Model):
         y = self.act(h)
         return y
 
+class BaseDiscriminatorBlock(Model):
+    def __init__(self,
+                 lod,
+                 res=32,
+                 num_channels=3,
+                 fmap_base=8192,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 use_sn=False,
+                 **kwargs):
+        super(BaseDiscriminatorBlock, self).__init__(**kwargs)
+        self.lod = tf.cast(lod, tf.float32)
+
+        def res2num_filters(res):
+            return min(int(fmap_base * (2.0 / res) ** fmap_decay), fmap_max)
+
+        input_shape = (2 * res, 2 * res, res2num_filters(2 * res))
+        num_filters = (res2num_filters(2 * res), res2num_filters(res))
+        self.down_sample = AveragePooling2D(
+            (2, 2), name='down_sample_{0:}x{0:}'.format(2 * res))
+        self.block = discriminator_block(
+            input_shape, res, num_filters, use_wscale=use_wscale,
+            lr_mul=lr_mul, distribution=distribution, use_sn=use_sn,
+            name='discriminator_block_{0:}x{0:}'.format(2 * res))
+
+        input_shape = (res, res, num_channels)
+        self.fromRGB = fromRGB(
+            input_shape, res, res2num_filters(res), use_wscale=use_wscale,
+            lr_mul=lr_mul, distribution=distribution, use_sn=use_sn,
+            name='fromRGB_{0:}x{0:}'.format(res))
+
+class DynamicDiscriminatorBlock(BaseDiscriminatorBlock):
+    def __init__(self,
+                 lod,
+                 res=32,
+                 num_channels=3,
+                 fmap_base=8192,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 use_sn=False,
+                 **kwargs):
+        super(DynamicDiscriminatorBlock, self).__init__(
+            lod,
+            res=res,
+            num_channels=num_channels,
+            fmap_base=fmap_base,
+            fmap_decay=fmap_decay,
+            fmap_max=fmap_max,
+            use_wscale=use_wscale,
+            lr_mul=lr_mul,
+            distribution=distribution,
+            use_sn=use_sn,
+            **kwargs)
+
+    def call(self, inputs):
+        @tf.function
+        def _call(x, image, lod):
+            image = self.down_sample(image)
+            if self.lod >= lod + 1:
+                x = self.fromRGB(image)
+            elif self.lod <= lod:
+                x = self.block(x)
+            else:
+                x_new = self.block(x)
+                y_new = self.fromRGB(image)
+                x = interpolate_clip(x_new, y_new, self.lod - lod)
+            return x, image
+        return _call(*inputs)
+
+class StaticDiscriminatorBlock(BaseDiscriminatorBlock):
+    def __init__(self,
+                 lod,
+                 res=32,
+                 num_channels=3,
+                 fmap_base=8192,
+                 fmap_decay=1.0,
+                 fmap_max=512,
+                 use_wscale=True,
+                 lr_mul=1.0,
+                 distribution='untruncated_normal',
+                 use_sn=False,
+                 **kwargs):
+        super(StaticDiscriminatorBlock, self).__init__(
+            lod,
+            res=res,
+            num_channels=num_channels,
+            fmap_base=fmap_base,
+            fmap_decay=fmap_decay,
+            fmap_max=fmap_max,
+            use_wscale=use_wscale,
+            lr_mul=lr_mul,
+            distribution=distribution,
+            use_sn=use_sn,
+            **kwargs)
+
+    def call(self, inputs):
+        @tf.function
+        def _call(x, image, lod):
+            image = self.down_sample(image)
+            y = self.fromRGB(image)
+            x = self.block(x)
+            x = interpolate_clip(x, y, self.lod - lod)
+            return x, image
+        return _call(*inputs)
+
 class Discriminator(Model):
     def __init__(self,
                 res=32,
@@ -815,98 +929,66 @@ class Discriminator(Model):
                 use_sn=False,
                 **kwargs):
         super(Discriminator, self).__init__(**kwargs)
-        self.res = res
-        self.num_channels = num_channels
-        self.fmap_base = fmap_base
-        self.fmap_decay = fmap_decay
-        self.fmap_max = fmap_max
 
         if mode is not None and mode not in ['dynamic', 'static']:
             raise ValueError('Unknown mode: ' + mode)
         self.mode = 'dynamic' if mode is None else mode
 
-        self.use_wscale = use_wscale
-        self.lr_mul = lr_mul
-        self.distribution = distribution
-
-        self.batch_std_group_size = batch_std_group_size
-        self.batch_std_num_features = batch_std_num_features
-
-        self.use_sn = use_sn
-
         self.num_blocks = res2num_blocks(res)
-        self._build_layers()
 
-    def res2num_filters(self, res):
-        return min(int(self.fmap_base * (2.0 / res) ** self.fmap_decay), self.fmap_max)
-
-    def _build_layers(self):
-        res = self.res
-        input_shape = (res, res, self.num_channels)
+        def res2num_filters(res):
+            return min(int(fmap_base * (2.0 / res) ** fmap_decay), fmap_max)
 
         with tf.name_scope('discriminator'):
+            input_shape = (res, res, num_channels)
             self.fromRGB0 = fromRGB(
-                input_shape, res, self.res2num_filters(res), use_wscale=self.use_wscale,
-                lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
+                input_shape, res, res2num_filters(res), use_wscale=use_wscale,
+                lr_mul=lr_mul, distribution=distribution, use_sn=use_sn,
                 name='fromRGB_{0:}x{0:}'.format(res))
 
             for k in range(1, self.num_blocks):
                 i = self.num_blocks - k
-                input_shape = (res, res, self.res2num_filters(res))
-                num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
-                setattr(self, 'down_sample{:}'.format(k), AveragePooling2D(
-                    (2, 2), name='down_sample_{0:}x{0:}'.format(res)))
-                setattr(self, 'block{:}'.format(k), discriminator_block(
-                    input_shape, res, num_filters, use_wscale=self.use_wscale,
-                    lr_mul=self.lr_mul, distribution=self.distribution, use_sn=self.use_sn,
-                    name='discriminator_block_{0:}x{0:}'.format(res)))
-
                 res = res // 2
-                input_shape = (res, res, self.num_channels)
-                setattr(self, 'fromRGB{:}'.format(k), fromRGB(
-                    input_shape, res, self.res2num_filters(res),
-                    use_wscale=self.use_wscale, lr_mul=self.lr_mul,
-                    distribution=self.distribution, use_sn=self.use_sn,
-                    name='fromRGB_{0:}x{0:}'.format(res)))
+                if mode == 'static':
+                    setattr(self, 'block{:}'.format(k), StaticDiscriminatorBlock(
+                        i,
+                        res=res,
+                        num_channels=num_channels,
+                        fmap_base=fmap_base,
+                        fmap_decay=fmap_decay,
+                        fmap_max=fmap_max,
+                        use_wscale=use_wscale,
+                        lr_mul=lr_mul,
+                        distribution=distribution,
+                        use_sn=use_sn))
+                elif mode == 'dynamic':
+                    setattr(self, 'block{:}'.format(k), DynamicDiscriminatorBlock(
+                        i,
+                        res=res,
+                        num_channels=num_channels,
+                        fmap_base=fmap_base,
+                        fmap_decay=fmap_decay,
+                        fmap_max=fmap_max,
+                        use_wscale=use_wscale,
+                        lr_mul=lr_mul,
+                        distribution=distribution,
+                        use_sn=use_sn))
 
-            input_shape = (res, res, self.res2num_filters(res))
-            num_filters = (self.res2num_filters(res), self.res2num_filters(res // 2))
+            input_shape = (res, res, res2num_filters(res))
+            num_filters = (res2num_filters(res), res2num_filters(res // 2))
             self.output_layer = discriminator_block_output(
-                input_shape, res, num_filters, use_wscale=self.use_wscale,
-                lr_mul=self.lr_mul, distribution=self.distribution,
-                batch_std_group_size=self.batch_std_group_size,
-                batch_std_num_features=self.batch_std_num_features,
-                use_sn=self.use_sn, name='discriminator_block_output')
+                input_shape, res, num_filters, use_wscale=use_wscale,
+                lr_mul=lr_mul, distribution=distribution,
+                batch_std_group_size=batch_std_group_size,
+                batch_std_num_features=batch_std_num_features,
+                use_sn=use_sn, name='discriminator_block_output')
 
     def call(self, inputs, training=None):
         lod, image = inputs
         lod = tf.reshape(lod, [-1])[0]
-
         x = self.fromRGB0(image)
 
-        if self.mode == 'static':
-            for k in range(1, self.num_blocks):
-                lod_k = tf.cast(self.num_blocks - k, tf.float32)
-                image = getattr(self, 'down_sample{:}'.format(k))(image)
-                y = getattr(self, 'fromRGB{:}'.format(k))(image)
-                x = getattr(self, 'block{:}'.format(k))(x)
-                x = interpolate_clip(x, y, lod_k - lod)
-
-        elif self.mode == 'dynamic':
-            for k in range(1, self.num_blocks):
-                lod_k = tf.cast(self.num_blocks - k, tf.float32)
-                image = getattr(self, 'down_sample{:}'.format(k))(image)
-                @tf.function
-                def block_i(x, image, lod):
-                    if lod_k >= lod + 1:
-                        x = getattr(self, 'fromRGB{:}'.format(k))(image)
-                    elif lod_k <= lod:
-                        x = getattr(self, 'block{:}'.format(k))(x)
-                    else:
-                        x_new = getattr(self, 'block{:}'.format(k))(x)
-                        y_new = getattr(self, 'fromRGB{:}'.format(k))(image)
-                        x = interpolate_clip(x_new, y_new, lod_k - lod)
-                    return x
-                x = block_i(x, image, lod)
+        for k in range(1, self.num_blocks):
+            x, image = getattr(self, 'block{:}'.format(k))((x, image, lod))
         outputs = self.output_layer(x)
         return outputs
