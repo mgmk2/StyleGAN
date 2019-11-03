@@ -585,10 +585,10 @@ class StyleMixer(Model):
         lod = Input((1,))
         _ = self.call((lod, latent1, latent2))
 
-    def call(self, inputs):
+    def call(self, inputs, training=None):
         lod, latent1, latent2 = inputs
         lod_tensor = self.reshape_layer(lod)
-        return self.mix_style((latent1, latent2, lod_tensor))
+        return self.mix_style((latent1, latent2, lod_tensor), training=training)
 
 #===============================================================================
 
