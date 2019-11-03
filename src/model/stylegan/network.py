@@ -84,7 +84,7 @@ def image_resizer(image, lod, res=32, mode=None):
 
 #===============================================================================
 
-class AdaIN_block(Model):
+class AdaIN_block(Layer):
     def __init__(self,
                  res,
                  num_channels,
@@ -122,7 +122,7 @@ class AdaIN_block(Model):
         y = self.adain_layer((x, style))
         return y
 
-class const_block(Model):
+class const_block(Layer):
     def __init__(self,
                  res,
                  num_filters,
@@ -192,7 +192,7 @@ class const_block(Model):
         y = self.adain1((h, w1))
         return y
 
-class generator_block(Model):
+class generator_block(Layer):
     def __init__(self,
                  input_shape,
                  res,
@@ -283,7 +283,7 @@ class generator_block(Model):
         y = self.adain1((h, w1))
         return y
 
-class toRGB(Model):
+class toRGB(Layer):
     def __init__(self,
                  input_shape,
                  res,
@@ -316,7 +316,7 @@ class toRGB(Model):
             y = self.scaled_conv(inputs)
         return y
 
-class SynthesisBlock(Model):
+class SynthesisBlock(Layer):
     def __init__(self, lod,
                  res=32,
                  num_channels=3,
@@ -379,8 +379,7 @@ class DynamicSynthesisBlock(SynthesisBlock):
 
     def call(self, inputs):
         @tf.function
-        def _call(inputs):
-            x, image_out, w, noise, lod = inputs
+        def _call(x, image_out, w, noise, lod):
             if self.lod >= lod + 1:
                 x = self.x_out_layer(x)
                 image_out = self.image_out_layer(image_out)
@@ -393,7 +392,7 @@ class DynamicSynthesisBlock(SynthesisBlock):
                 image_out_new = self.image_out_layer(image_out)
                 image_out = interpolate_clip(x_new, image_out_new, self.lod - lod)
             return x, image_out
-        return _call(inputs)
+        return _call(*inputs)
 
 class StaticSynthesisBlock(SynthesisBlock):
     def __init__(self, lod,
@@ -464,11 +463,8 @@ class GeneratorSynthesis(Model):
                 input_shape, res, num_channels, use_wscale=use_wscale,
                 lr_mul=lr_mul, distribution=distribution,
                 name='toRGB_{0:}x{0:}'.format(res))
-            self.slice_w0 = Lambda(lambda x: x[:, :2])
 
             for i in range(1, self.num_blocks):
-                setattr(self, 'slice_w{:}'.format(i),
-                    Lambda(lambda x: x[:, 2 * i:2 * (i + 1)]))
                 res *= 2
                 if mode == 'static':
                     setattr(self, 'block{:}'.format(i), StaticSynthesisBlock(
@@ -491,18 +487,16 @@ class GeneratorSynthesis(Model):
                         lr_mul=lr_mul,
                         distribution=distribution))
 
-    def call(self, inputs, training=None):
+    def call(self, inputs):
         lod, w, *noise = inputs
         lod = tf.reshape(lod, [-1])[0]
 
-        w0 = self.slice_w0(w)
-        x = self.const_block((w0, noise[0]))
+        x = self.const_block((w[:, :2], noise[0]))
         image_out = self.image_out_layer0(x)
 
         for i in range(1, self.num_blocks):
-            w_i = getattr(self, 'slice_w{:}'.format(i))(w)
             x, image_out = getattr(self, 'block{:}'.format(i))(
-                (x, image_out, w_i, noise[i], lod), training=training)
+                (x, image_out, w[:, 2 * i:2 * (i + 1)], noise[i], lod))
         return image_out
 
 class GeneratorMapping(Model):
@@ -592,7 +586,7 @@ class StyleMixer(Model):
 
 #===============================================================================
 
-class discriminator_block_output(Model):
+class discriminator_block_output(Layer):
     def __init__(self,
                  input_shape,
                  res,
@@ -679,7 +673,7 @@ class discriminator_block_output(Model):
         y = self.dense1(h)
         return y
 
-class discriminator_block(Model):
+class discriminator_block(Layer):
     def __init__(self,
                  input_shape,
                  res,
@@ -756,7 +750,7 @@ class discriminator_block(Model):
         y = self.act1(h)
         return y
 
-class fromRGB(Model):
+class fromRGB(Layer):
     def __init__(self,
                  input_shape,
                  res,
@@ -802,7 +796,7 @@ class fromRGB(Model):
         y = self.act(h)
         return y
 
-class BaseDiscriminatorBlock(Model):
+class BaseDiscriminatorBlock(Layer):
     def __init__(self,
                  lod,
                  res=32,
