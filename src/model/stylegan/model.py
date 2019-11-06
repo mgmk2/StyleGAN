@@ -200,6 +200,11 @@ class StyleGANModel(BaseModel):
         for opt, models in zip(optimizers, [gen_models, disc_models]):
             slot_names = opt.get_slot_names()
             opt_weights[opt._name] = {}
+
+            for v in opt.weights:
+                if opt._name + '/iter' in v.name:
+                    opt_weights[opt._name]['iter'] = v.numpy()
+
             for model in models:
                 opt_weights[opt._name][model.name] = {}
                 for v in model.trainable_variables:
@@ -244,10 +249,12 @@ class StyleGANModel(BaseModel):
 
         for opt, models in zip(optimizers, [gen_models, disc_models]):
             opt_name = opt._name
-            with tf.name_scope(opt_name):
-                for model in models:
-                    self._set_model_weights(model, model_weights[model.name])
-                    if load_optimizer:
+            for model in models:
+                self._set_model_weights(model, model_weights[model.name])
+            if load_optimizer:
+                with tf.name_scope(opt_name):
+                    opt.iterations.assign(opt_weights[opt_name]['iter'])
+                    for model in models:
                         self._set_optimizer_weights(
                             model, opt, opt_weights[opt_name][model.name])
 
