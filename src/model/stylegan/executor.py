@@ -202,13 +202,18 @@ class StyleGAN(ExecutorBase):
 
                 if iteration % iter_ratio[0] == 0:
                     d_loss = self.model.train_disc(inputs, lod_input)
+                    self.history['D loss'].append(d_loss)
+                else:
+                    self.history['D loss'].append(None)
 
                 if iteration % iter_ratio[1] == 0:
                     g_loss = self.model.train_gen(inputs, lod_input)
+                    self.history['G loss'].append(g_loss)
+                else:
+                    self.history['G loss'].append(None)
 
                 d_loss_epoch += d_loss
                 g_loss_epoch += g_loss
-
                 sys.stdout.write(
                     ('\repoch:{:d}  iter:{:d}  lod:{:.2f}  '
                      '[D loss: {:f}] [G loss: {:f}]   ').format(
@@ -218,11 +223,6 @@ class StyleGAN(ExecutorBase):
 
             d_loss_epoch /= self.N_batches
             g_loss_epoch /= self.N_batches
-            self.history['D loss'].append(d_loss_epoch)
-            self.history['D acc'].append(None)
-            self.history['G loss'].append(g_loss_epoch)
-            self.history['G acc'].append(None)
-
             epoch_time = time.time() - time_start_epoch
             sys.stdout.write(
                 ('\repoch:{:d}  iter:{:d}  lod:{:.2f}  '

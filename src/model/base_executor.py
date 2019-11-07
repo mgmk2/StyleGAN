@@ -18,8 +18,7 @@ class ExecutorBase(object):
         if not os.path.exists(os.path.join(self.RESULT_DIR, 'image')):
             os.mkdir(os.path.join(self.RESULT_DIR, 'image'))
 
-        self.history = {'D loss': [], 'D acc': [],
-                        'G loss': [], 'G acc': []}
+        self.history = {'D loss': [], 'G loss': []}
 
         self.dataset_train = dataset_utils.get_dataset(self.params.dataset_train)['train']
         assert self.dataset_train['images'].shape[1:] == self.params.image_shape
