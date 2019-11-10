@@ -820,7 +820,7 @@ class BaseDiscriminatorBlock(Layer):
         self.down_sample = AveragePooling2D(
             (2, 2), name='down_sample_{0:}x{0:}'.format(2 * res))
         self.block = discriminator_block(
-            input_shape, res, num_filters, use_wscale=use_wscale,
+            input_shape, 2 * res, num_filters, use_wscale=use_wscale,
             lr_mul=lr_mul, distribution=distribution, use_sn=use_sn,
             name='discriminator_block_{0:}x{0:}'.format(2 * res))
 
