@@ -123,7 +123,7 @@ class MixStyle(Layer):
                 return latent1
             latent1 = tf_utils.smart_cond(training, true_branch, false_branch)
 
-        if training_value != False and self.truncate_latent:
+        if training_value != True and self.truncate_latent:
             def true_branch():
                 return self._interpolate(latent_avg_new, latent1, self.coeff)
             def false_branch():
